@@ -1,12 +1,10 @@
+from utils import *
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np 
 import math
-
-def debug_shape(t):
-	print '%s has shape %s' % (t.name,t.get_shape().as_list())
 
 def generate_copy_sequence(batch_size,data_size,time_step,sess):
 	called_count = 0
@@ -37,13 +35,16 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 		self.scope = scope
 
 		self.sess = sess
-
-		self.M_0 = tf.ones(memory_shape) * 1e-9
+                
+                self.max_time_ph = tf.placeholder(tf.int32)
+		self.M_0 = tf.Variable(np.random.rand(*memory_shape)) * 1e-3
 		self.r_t0 = tf.zeros((self.key_length,))
 		self.rw_0 = tf.zeros((self.num_memory,))
 		self.ww_0 = tf.zeros((self.num_memory,))
 
 
+                # summary stuff
+                self.summaries = []
 		with tf.variable_scope(self.scope or 'rnn'):
 			with tf.variable_scope('Weights'):
 				# controller weights
@@ -65,7 +66,7 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 				b_rg = tf.get_variable('b_rg',shape = (1,),initializer = tf.constant_initializer(0))
 
 				W_rs = tf.get_variable('W_rs',shape = (controller_size,self.shift_range),initializer = tf.random_normal_initializer(stddev = 1e-3))
-				b_rs = tf.get_variable('b_rs',shape = (self.shift_range,),initializer = tf.constant_initializer(0))
+				b_rs = tf.get_variable('b_rs',shape = (self.shift_range,),initializer = tf.constant_initializer(1e-3))
 
 				W_rt = tf.get_variable('W_rt',shape = (controller_size,1),initializer = tf.random_normal_initializer(stddev = 1e-3))
 				b_rt = tf.get_variable('b_rt',shape = (1,),initializer = tf.constant_initializer(0))
@@ -81,22 +82,23 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 				b_wg = tf.get_variable('b_wg',shape = (1,),initializer = tf.constant_initializer(0))
 
 				W_ws = tf.get_variable('W_ws',shape = (controller_size,self.shift_range),initializer = tf.random_normal_initializer(stddev = 1e-3))
-				b_ws = tf.get_variable('b_ws',shape = (self.shift_range,),initializer = tf.constant_initializer(0))
+				b_ws = tf.get_variable('b_ws',shape = (self.shift_range,),initializer = tf.constant_initializer(1e-3))
 
 				W_wt = tf.get_variable('W_wt',shape = (controller_size,1),initializer = tf.random_normal_initializer(stddev = 1e-3))
 				b_wt = tf.get_variable('b_wt',shape = (1,),initializer = tf.constant_initializer(0))
 				# erase/add vectors
-				W_e  = tf.get_variable('W_e',shape = (self.controller_size,self.key_length),initializer = tf.constant_initializer(0))
+				W_e  = tf.get_variable('W_e',shape = (self.controller_size,self.key_length),initializer = tf.random_normal_initializer(stddev = 1e-3))
 				b_e  = tf.get_variable('b_e',shape = (self.key_length,),initializer = tf.constant_initializer(0))
 				
-				W_a  = tf.get_variable('W_a',shape = (self.controller_size,self.key_length),initializer = tf.constant_initializer(0))
-				b_a  = tf.get_variable('b_a',shape = (self.key_length,),initializer = tf.constant_initializer(0))
-		
-#		self.run_ops = tf.scan(self.step,elems = tf.transpose(self.input_var,perm = [1,0,2]),initializer = [self.M_0,self.r_t0,self.rw_0,self.ww_0])
-		# handle the collection of output var
-
+				W_a  = tf.get_variable('W_a',shape = (self.controller_size,self.key_length),initializer = tf.random_normal_initializer(stddev = 1e-3))
+				b_a  = tf.get_variable('b_a',shape = (self.key_length,),initializer = tf.constant_initializer(1e-3))
+                
+                # write weights
+                self.trainable_weights = [W_a,b_a,W_e,b_e,W_wt,b_wt,W_ws,b_ws,W_wg,b_wg,W_wb,b_wb,W_wk,b_wk]
+                # read weights
+                self.trainable_weights += [W_rt,b_rt,W_rs,b_rs,W_rg,b_rg,W_rb,b_rb,W_rk,b_rk]
 	def get_traininable_weights(self):
-		return tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,scope = 'Weights')
+		return self.trainable_weights
 
 	def cosine_similarity(self,M, k, eps=1e-6):
 		k = tf.expand_dims(k,1)
@@ -147,8 +149,8 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 		assert g.get_shape().as_list() == [self.batch_size,1]
 		assert s.get_shape().as_list() == [self.batch_size,self.shift_range]
 		assert t.get_shape().as_list() == [self.batch_size,1]
-		assert M.get_shape().as_list() == [self.batch_size] + list(self.memory_shape)
-		assert wt.get_shape().as_list() == [self.batch_size,self.num_memory]
+		#assert M.get_shape().as_list() == [self.batch_size] + list(self.memory_shape)
+		#assert wt.get_shape().as_list() == [self.batch_size,self.num_memory]
 		# content addressing
 		wc = tf.nn.softmax(tf.exp(tf.expand_dims(b,-1) * self.cosine_similarity(M,k)))
 		# interpolation
@@ -156,7 +158,7 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 		wt = tf.expand_dims(wt,1)
 		wg = tf.matmul(lg,wc) + tf.matmul(1 - lg,wt)
 		# circulat convolution ( weight shifting)
-		wcon = self.batch_circular_convolution(wg,k)
+		wcon = self.batch_circular_convolution(wg,s)
 		# sharpening
 		pow_t = tf.concat([t for _ in range(100)],1)
 		wf = tf.nn.softmax(tf.pow(wcon,pow_t))
@@ -164,22 +166,37 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 
 	@property
 	def state_size(self):
-		return (self.M_0.get_shape(),self.r_t0.get_shape(),self.rw_0.get_shape(),self.ww_0.get_shape())
+            return (self.M_0.get_shape(),self.r_t0.get_shape(),self.rw_0.get_shape(),self.ww_0.get_shape())
 
 	@property
 	def output_size(self):
-		return self.output_shape
+            return self.output_shape
 
+        # input:
+        # a tensor of shape (batch_size x time_step x input_length)
+        # output:
+        # a tensor of shape (batch_size x time_step x output_length)
+#        def create_predict_op(self,inputs,max_t):
+#            inputs = tf.transpose(inputs,perms = [1,0,2])
+#            in_ta = tf.TensorArray(dtype = inputs.dtype,size = max_t,dynamic_size = False)
+#            in_ta = in_ta.unstack(inputs)
+#            out_ta = tf.TensorArray(dtype = inputs.dtype,size = max_t,dynamic_size = False)
+#            loop_op = tf.scan(self.step,in_ta,initializer = (self.M_0,self.r_t0,self.rw_0,self.ww_0,out_ta))
 
 	def __call__(self,inputs,state,scope = None):
-		return self.step(state,inputs,scope)
+            return self.step(state,inputs,scope)
 	# the function to be used to scan throught the list of input
 	# x_t is the input vector of A TIME STEP with shape (batch_size x input_size)
 	def step (self,(M_t,r_t,rw_t,ww_t),(x_t),scope = None):
-		debug_shape(M_t)
-		debug_shape(r_t)
-		debug_shape(rw_t)
-		debug_shape(ww_t)
+                fprint('step...')
+                # log tensors
+                """
+                log_tensors({
+                        "M_t":M_t,
+                        "rw_t":rw_t,
+                        "ww_t":ww_t
+                    })
+                """
 		with tf.variable_scope('Weights',reuse = True):
 			# controller weights
 			# input-read -> hidden
@@ -188,11 +205,9 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 			# hidden -> out
 			W_out = tf.get_variable('W_out',shape = (self.controller_size,self.output_shape))
 			b_out = tf.get_variable('b_out',shape = (self.output_shape,))
-			
 			# read head weights
 			W_rk = tf.get_variable('W_rk',shape = (self.controller_size,self.key_length))
 			b_rk = tf.get_variable('b_rk',shape = (self.key_length,))
-			
 			W_rb = tf.get_variable('W_rb',shape = (self.controller_size,1))
 			b_rb = tf.get_variable('b_rb',shape = (1,))
 
@@ -229,24 +244,26 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 
 		# construct graph for NTM
 		with tf.variable_scope(scope or type(self).__name__):
-			x_t = tf.squeeze(x_t,1)
+                        debug_shape(x_t,'x_t')
+			#x_t = tf.squeeze(x_t,1)
 			long_inp = tf.concat([x_t,r_t],-1)
 			con_hidden = tf.nn.relu(tf.nn.xw_plus_b(long_inp,W_con,b_con))
 			con_out = tf.nn.relu(tf.nn.xw_plus_b(con_hidden,W_out,b_out))
 			
-			rk = tf.nn.softmax(tf.nn.xw_plus_b(con_hidden,W_rk,b_rk))
+			rk = tf.nn.xw_plus_b(con_hidden,W_rk,b_rk)
 			rb = tf.nn.relu(tf.nn.xw_plus_b(con_hidden,W_rb,b_rb))
 			rg = tf.nn.sigmoid(tf.nn.xw_plus_b(con_hidden,W_rg,b_rg))
 			rs = tf.nn.softmax(tf.nn.xw_plus_b(con_hidden,W_rs,b_rs))
 			rt = 1 + tf.nn.relu(tf.nn.xw_plus_b(con_hidden,W_rt,b_rt))
 
-			wk = tf.nn.softmax(tf.nn.xw_plus_b(con_hidden,W_wk,b_wk))
+			wk = tf.nn.xw_plus_b(con_hidden,W_wk,b_wk)
 			wb = tf.nn.relu(tf.nn.xw_plus_b(con_hidden,W_wb,b_wb))
 			wg = tf.nn.sigmoid(tf.nn.xw_plus_b(con_hidden,W_wg,b_wg))
 			ws = tf.nn.softmax(tf.nn.xw_plus_b(con_hidden,W_ws,b_ws))
 			wt = 1 + tf.nn.relu(tf.nn.xw_plus_b(con_hidden,W_wt,b_wt))
-			ev = tf.nn.softmax(tf.nn.xw_plus_b(con_hidden,W_e,b_e))
-			av = tf.nn.softmax(tf.nn.xw_plus_b(con_hidden,W_a,b_a))
+
+			ev = tf.nn.xw_plus_b(con_hidden,W_e,b_e)
+			av = tf.nn.xw_plus_b(con_hidden,W_a,b_a)
 
 			# eval read/write weight
 			r_weight = self.eval_out(rk,rb,rg,rs,rt,M_t,rw_t)
@@ -269,8 +286,6 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 			em = tf.matmul(tf.expand_dims(w_weight,-1),tf.expand_dims(ev,1))
 			am = tf.matmul(tf.expand_dims(w_weight,-1),tf.expand_dims(av,1))
 			M_t1 = tf.multiply(M_t,1 - em) + am
-			
-			assert M_t1.get_shape().as_list() == M_t.get_shape().as_list()
 
 		# handle step-to-step stuff
 
@@ -280,45 +295,58 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 
 if __name__ == '__main__':
 	with tf.Session() as sess:
-		seq_length = 16
+		seq_length = 10
 		org_seq_length = 2 * seq_length + 1
-		input_shape = 20
-		target_shape = 10
-		batch_size = 16
+		input_shape = 8
+		target_shape = 8
+		batch_size = 1
 		clip_vals = 10
 		lr = 0.0001
-		inp_var = tf.placeholder(tf.float32,(batch_size,org_seq_length,input_shape))
+
+                mask = make_masks(batch_size,org_seq_length)
+                inp_var = tf.placeholder(tf.float32,(batch_size,org_seq_length,input_shape))
+                inp_var_time_major = tf.transpose(inp_var,perm = [1,0,2])
 		inputs = tf.split(inp_var,org_seq_length,1)
 
 		target_var = tf.placeholder(tf.float32,(batch_size,input_shape))
 		gen = generate_copy_sequence(batch_size,input_shape,seq_length,sess)
-		print map(lambda t: t.shape,gen.next())
-		
-		tm =  NTMCell(sess,input_shape,target_shape,memory_shape = (100,3))
-		
-		output, _ = tf.contrib.rnn.static_rnn(tm,inputs,dtype= tf.float32)
-		concat_out = tf.concat([tf.expand_dims(out,1) for out in output],1)
 
-		org_target = tf.placeholder(tf.float32,(batch_size,time_seq,seq_length))
+                tm =  NTMCell(sess,input_shape,target_shape,memory_shape = (100,3),batch_size = batch_size,controller_size = 20)
+		output, (M_fin,r_fin,rw_fin,ww_fin) = tf.nn.dynamic_rnn(tm,inp_var_time_major,dtype= tf.float32,time_major = True)
+
+                output_time_minor = tf.transpose(output,perm = [1,0,2])
+
+		org_target = tf.placeholder(tf.float32,(batch_size,org_seq_length,target_shape))
 		target  = tf.argmax(org_target,2)
+		weights = tf.placeholder(tf.float32,(batch_size,org_seq_length))
 
-		weights = tf.placeholder(tf.float32,(batch_size,seq_length))
-		loss_op = tf.contrib.seq2seq.sequence_loss(concat_out,target,weights)
-		opt = tf.train.RMSPropOptimizer(lr)
+		loss_op = tf.contrib.seq2seq.sequence_loss(output_time_minor,target,weights)
+                opt = tf.train.RMSPropOptimizer(lr)
+                print 'comuting gradients...'
 		grads = opt.compute_gradients(loss_op,tm.get_traininable_weights())
-		grads = [(tf.clip_by_value(g,-clip_vals,clip_vals),v) for (g,v) in grads]
+                print 'unused gradients: %s' % str([(g,v) for (g,v) in grads if g is None])
+		grads = [(tf.clip_by_value(g,-clip_vals,clip_vals),v) for (g,v) in grads if g is not None]
 		train_op = opt.apply_gradients(grads)
+                """summaries"""
+                input_summary = tf.summary.image('input',tf.expand_dims(inp_var,-1))
+                output_summary = tf.summary.image('output',tf.expand_dims(output_time_minor,-1))
+                target_summary = tf.summary.image('target',tf.expand_dims(org_target,-1))
+                loss_summary = tf.summary.scalar('loss',loss_op)
+                M_summary = tf.summary.image('memory',tf.expand_dims(M_fin,-1))
+                weight_summaries = log_dense_weights(tm.get_traininable_weights())
+                merge_summary = tf.summary.merge([loss_summary,M_summary,input_summary,output_summary,target_summary] + weight_summaries)
+                """end of summaries"""
+                writer = tf.summary.FileWriter('tmp/ntm_v3',graph = sess.graph)
+                sess.run(tf.global_variables_initializer())
 
-		# for epoch in range(1000):
-		# 	inp,oup = gen.next()
-		# 	loss,_ = sess.run(train_op,feed_dict = {
-
-		# 		})
-		#inp_var = tf.ones((batch_size,input_shape))
-		# inp_var = tf.placeholder(tf.float32,(batch_size,input_shape))
-		# target_var = tf.placeholder(tf.float32,(batch_size,input_shape))
-		# #inp = tf.ones((16,20)) # batch_size, input_dim
-
-		# target_var = tf.placeholder(tf.float32,(batch_size,seq_length,input_shape))
-		
-
+                for epoch in range(70000):
+                    inp,oup = gen.next()
+                    feed_dict = {
+                                org_target: oup,
+                                weights: mask,
+                                inp_var: inp,
+                            }
+                    loss,summary,_ = sess.run([loss_op,merge_summary,train_op],feed_dict = feed_dict)
+                    print mem
+                    writer.add_summary(summary,epoch)
+                    print 'epoch:{},loss:{}'.format(epoch,loss)
