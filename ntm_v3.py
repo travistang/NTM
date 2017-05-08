@@ -14,8 +14,10 @@ def generate_copy_sequence(batch_size,data_size,time_step,sess):
 	seq = tf.map_fn(lambda n: tf.one_hot(n,data_size,dtype = tf.int64), seq_input)
 	zeros = tf.zeros([batch_size,time_step,data_size],tf.int64)
 	stop = tf.map_fn(lambda n: tf.one_hot(n,data_size,dtype = tf.int64),(data_size - 1) * np.ones((batch_size,1),dtype = np.int64))
+        long_stop = tf.map_fn(lambda n: tf.one_hot(n,data_size,dtype = tf.int64),(data_size - 1) * np.ones((batch_size,time_step),dtype = np.int64))
+
 	# then concat them
-	inp = tf.concat([seq,stop,zeros],1)
+	inp = tf.concat([seq,stop,long_stop],1)
 	out = tf.concat([zeros,stop,seq],1)
 	#mask = tf.cast(tf.reduce_max(out,2),tf.float32)
 	while True:
@@ -97,6 +99,7 @@ class NTMCell(tf.contrib.rnn.RNNCell):
                 self.trainable_weights = [W_a,b_a,W_e,b_e,W_wt,b_wt,W_ws,b_ws,W_wg,b_wg,W_wb,b_wb,W_wk,b_wk]
                 # read weights
                 self.trainable_weights += [W_rt,b_rt,W_rs,b_rs,W_rg,b_rg,W_rb,b_rb,W_rk,b_rk]
+
 	def get_traininable_weights(self):
 		return self.trainable_weights
 
@@ -172,16 +175,6 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 	def output_size(self):
             return self.output_shape
 
-        # input:
-        # a tensor of shape (batch_size x time_step x input_length)
-        # output:
-        # a tensor of shape (batch_size x time_step x output_length)
-#        def create_predict_op(self,inputs,max_t):
-#            inputs = tf.transpose(inputs,perms = [1,0,2])
-#            in_ta = tf.TensorArray(dtype = inputs.dtype,size = max_t,dynamic_size = False)
-#            in_ta = in_ta.unstack(inputs)
-#            out_ta = tf.TensorArray(dtype = inputs.dtype,size = max_t,dynamic_size = False)
-#            loop_op = tf.scan(self.step,in_ta,initializer = (self.M_0,self.r_t0,self.rw_0,self.ww_0,out_ta))
 
 	def __call__(self,inputs,state,scope = None):
             return self.step(state,inputs,scope)
@@ -190,13 +183,6 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 	def step (self,(M_t,r_t,rw_t,ww_t),(x_t),scope = None):
                 fprint('step...')
                 # log tensors
-                """
-                log_tensors({
-                        "M_t":M_t,
-                        "rw_t":rw_t,
-                        "ww_t":ww_t
-                    })
-                """
 		with tf.variable_scope('Weights',reuse = True):
 			# controller weights
 			# input-read -> hidden
@@ -328,13 +314,16 @@ if __name__ == '__main__':
 		grads = [(tf.clip_by_value(g,-clip_vals,clip_vals),v) for (g,v) in grads if g is not None]
 		train_op = opt.apply_gradients(grads)
                 """summaries"""
+                read_summary = tf.summary.histogram('read_vector',r_fin)
+                rw_summary = tf.summary.histogram('read_weights', rw_fin)
+                ww_summary = tf.summary.histogram('write_weights', ww_fin)
                 input_summary = tf.summary.image('input',tf.expand_dims(inp_var,-1))
                 output_summary = tf.summary.image('output',tf.expand_dims(output_time_minor,-1))
                 target_summary = tf.summary.image('target',tf.expand_dims(org_target,-1))
                 loss_summary = tf.summary.scalar('loss',loss_op)
                 M_summary = tf.summary.image('memory',tf.expand_dims(M_fin,-1))
                 weight_summaries = log_dense_weights(tm.get_traininable_weights())
-                merge_summary = tf.summary.merge([loss_summary,M_summary,input_summary,output_summary,target_summary] + weight_summaries)
+                merge_summary = tf.summary.merge([loss_summary,M_summary,input_summary,output_summary,target_summary,read_summary,rw_summary,ww_summary] + weight_summaries)
                 """end of summaries"""
                 writer = tf.summary.FileWriter('tmp/ntm_v3',graph = sess.graph)
                 sess.run(tf.global_variables_initializer())
@@ -347,6 +336,5 @@ if __name__ == '__main__':
                                 inp_var: inp,
                             }
                     loss,summary,_ = sess.run([loss_op,merge_summary,train_op],feed_dict = feed_dict)
-                    print mem
                     writer.add_summary(summary,epoch)
                     print 'epoch:{},loss:{}'.format(epoch,loss)
