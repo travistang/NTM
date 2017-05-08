@@ -36,7 +36,3 @@ def make_masks(batch_size,seq_length):
     res[:,data_len + 1:] = 1
     return res
 
-def log_tensors(var_dict,sess):
-    for name in var_dict:
-        t = var_dict[name]
-        t
