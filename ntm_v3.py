@@ -137,16 +137,18 @@ class NTMCell(tf.contrib.rnn.RNNCell):
 			kernels.append(tf.reduce_sum(v_ * k, 0))
 		return tf.dynamic_stitch([i for i in xrange(size)], kernels)
  	
- 	def batch_circular_convolution(self,M,k):
- 		batch_size = M.get_shape().as_list()[0]
- 		vks = zip(tf.split(tf.squeeze(M,1),batch_size,0),tf.split(k,batch_size,0))
- 		res = [self.circular_convolution(tf.squeeze(v,0),tf.squeeze(k,0)) for v,k in vks]
- 		#return tf.map_fn(lambda vk: circular_convolution(vk[0],vk[1]),vks)
- 		return tf.stack(res,0)
+	def batch_circular_convolution(self,M,k):
+		batch_size = M.get_shape().as_list()[0]
+		vks = zip(tf.split(tf.squeeze(M,1),batch_size,0),tf.split(k,batch_size,0))
+		res = [self.circular_convolution(tf.squeeze(v,0),tf.squeeze(k,0)) for v,k in vks]
+		#return tf.map_fn(lambda vk: circular_convolution(vk[0],vk[1]),vks)
+		return tf.stack(res,0)
 
- 	# input: described in paper
- 	# wt: the last read weight
+	# input: described in paper
+	# wt: the last read weight
 	def eval_out(self,k,b,g,s,t,M,wt):
+		debug_shape(M,'M')
+		debug_shape(wt,'wt')
 		assert k.get_shape().as_list() == [self.batch_size,self.key_length]
 		assert b.get_shape().as_list() == [self.batch_size,1]
 		assert g.get_shape().as_list() == [self.batch_size,1]
@@ -289,52 +291,52 @@ if __name__ == '__main__':
 		clip_vals = 10
 		lr = 0.0001
 
-                mask = make_masks(batch_size,org_seq_length)
-                inp_var = tf.placeholder(tf.float32,(batch_size,org_seq_length,input_shape))
-                inp_var_time_major = tf.transpose(inp_var,perm = [1,0,2])
-		inputs = tf.split(inp_var,org_seq_length,1)
+        mask = make_masks(batch_size,org_seq_length)
+        inp_var = tf.placeholder(tf.float32,(batch_size,org_seq_length,input_shape))
+        inp_var_time_major = tf.transpose(inp_var,perm = [1,0,2])
+        inputs = tf.split(inp_var,org_seq_length,1)
 
-		target_var = tf.placeholder(tf.float32,(batch_size,input_shape))
-		gen = generate_copy_sequence(batch_size,input_shape,seq_length,sess)
+        target_var = tf.placeholder(tf.float32,(batch_size,input_shape))
+        gen = generate_copy_sequence(batch_size,input_shape,seq_length,sess)
 
-                tm =  NTMCell(sess,input_shape,target_shape,memory_shape = (100,3),batch_size = batch_size,controller_size = 20)
-		output, (M_fin,r_fin,rw_fin,ww_fin) = tf.nn.dynamic_rnn(tm,inp_var_time_major,dtype= tf.float32,time_major = True)
+        tm =  NTMCell(sess,input_shape,target_shape,memory_shape = (100,3),batch_size = batch_size,controller_size = 20)
+        output, (M_fin,r_fin,rw_fin,ww_fin) = tf.nn.dynamic_rnn(tm,inp_var_time_major,dtype= tf.float32,time_major = True)
 
-                output_time_minor = tf.transpose(output,perm = [1,0,2])
+        output_time_minor = tf.transpose(output,perm = [1,0,2])
 
-		org_target = tf.placeholder(tf.float32,(batch_size,org_seq_length,target_shape))
-		target  = tf.argmax(org_target,2)
-		weights = tf.placeholder(tf.float32,(batch_size,org_seq_length))
+        org_target = tf.placeholder(tf.float32,(batch_size,org_seq_length,target_shape))
+        target  = tf.argmax(org_target,2)
+        weights = tf.placeholder(tf.float32,(batch_size,org_seq_length))
 
-		loss_op = tf.contrib.seq2seq.sequence_loss(output_time_minor,target,weights)
-                opt = tf.train.RMSPropOptimizer(lr)
-                print 'comuting gradients...'
-		grads = opt.compute_gradients(loss_op,tm.get_traininable_weights())
-                print 'unused gradients: %s' % str([(g,v) for (g,v) in grads if g is None])
-		grads = [(tf.clip_by_value(g,-clip_vals,clip_vals),v) for (g,v) in grads if g is not None]
-		train_op = opt.apply_gradients(grads)
-                """summaries"""
-                read_summary = tf.summary.histogram('read_vector',r_fin)
-                rw_summary = tf.summary.histogram('read_weights', rw_fin)
-                ww_summary = tf.summary.histogram('write_weights', ww_fin)
-                input_summary = tf.summary.image('input',tf.expand_dims(inp_var,-1))
-                output_summary = tf.summary.image('output',tf.expand_dims(output_time_minor,-1))
-                target_summary = tf.summary.image('target',tf.expand_dims(org_target,-1))
-                loss_summary = tf.summary.scalar('loss',loss_op)
-                M_summary = tf.summary.image('memory',tf.expand_dims(M_fin,-1))
-                weight_summaries = log_dense_weights(tm.get_traininable_weights())
-                merge_summary = tf.summary.merge([loss_summary,M_summary,input_summary,output_summary,target_summary,read_summary,rw_summary,ww_summary] + weight_summaries)
-                """end of summaries"""
-                writer = tf.summary.FileWriter('tmp/ntm_v3',graph = sess.graph)
-                sess.run(tf.global_variables_initializer())
+        loss_op = tf.contrib.seq2seq.sequence_loss(output_time_minor,target,weights)
+        opt = tf.train.RMSPropOptimizer(lr)
+        print 'comuting gradients...'
+        grads = opt.compute_gradients(loss_op,tm.get_traininable_weights())
+        print 'unused gradients: %s' % str([(g,v) for (g,v) in grads if g is None])
+        grads = [(tf.clip_by_value(g,-clip_vals,clip_vals),v) for (g,v) in grads if g is not None]
+        train_op = opt.apply_gradients(grads)
+        """summaries"""
+        read_summary = tf.summary.histogram('read_vector',r_fin)
+        rw_summary = tf.summary.histogram('read_weights', rw_fin)
+        ww_summary = tf.summary.histogram('write_weights', ww_fin)
+        input_summary = tf.summary.image('input',tf.expand_dims(inp_var,-1))
+        output_summary = tf.summary.image('output',tf.expand_dims(output_time_minor,-1))
+        target_summary = tf.summary.image('target',tf.expand_dims(org_target,-1))
+        loss_summary = tf.summary.scalar('loss',loss_op)
+        M_summary = tf.summary.image('memory',tf.expand_dims(M_fin,-1))
+        weight_summaries = log_dense_weights(tm.get_traininable_weights())
+        merge_summary = tf.summary.merge([loss_summary,M_summary,input_summary,output_summary,target_summary,read_summary,rw_summary,ww_summary] + weight_summaries)
+        """end of summaries"""
+        writer = tf.summary.FileWriter('tmp/ntm_v3',graph = sess.graph)
+        sess.run(tf.global_variables_initializer())
 
-                for epoch in range(70000):
-                    inp,oup = gen.next()
-                    feed_dict = {
-                                org_target: oup,
-                                weights: mask,
-                                inp_var: inp,
-                            }
-                    loss,summary,_ = sess.run([loss_op,merge_summary,train_op],feed_dict = feed_dict)
-                    writer.add_summary(summary,epoch)
-                    print 'epoch:{},loss:{}'.format(epoch,loss)
+        for epoch in range(70000):
+            inp,oup = gen.next()
+            feed_dict = {
+                        org_target: oup,
+                        weights: mask,
+                        inp_var: inp,
+                    }
+            loss,summary,_ = sess.run([loss_op,merge_summary,train_op],feed_dict = feed_dict)
+            writer.add_summary(summary,epoch)
+            print 'epoch:{},loss:{}'.format(epoch,loss)
