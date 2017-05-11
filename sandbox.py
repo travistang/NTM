@@ -152,7 +152,106 @@ def write(k,b,g,s,t,M,wt,e,a):
 	a = tf.matmul(w,a) # (b,n,k)
 	return tf.multiply(M,e) + a # (b,n,k) as new contents of the memory
 
-	
+class NTM(object):
+	def __init__(self,controller_type,inp_ph,out_dim,num_read,num_write,num_memory,mem_length,controller_size,shit_range,scope = None):
+		self.input_var = inp_ph
+		self.input_dim = tf.shape(self.input_var)[-1]
+		self.read_vars = []
+		self.write_vars = []
+		self.out_dim = out_dim
+		self.num_read = num_read
+		self.num_write = num_write
+		self.num_memory = num_memory
+		self.mem_length = mem_length
+		self.shift_range = shift_range
+		self.controller_dim = controller_size
+		
+		# construct graph for read heads
+		read_op = self.build_head_op(read = True)
+		write_op = self.build_head_op(read = False)
+		""" construct internal graph """
+		"""
+			Structure:
+		"""
+		with tf.variable_scope(self.scope or 'ntm'):
+			if controller_type = "feed_forward":
+				# TODO weight
+			else:
+				raise NotImplementedError('Unsupported controller type: %s' % controller_type)	
+	def main_loop(self,old_vars,x_t):
+		# extract all variables
+		num_read_head_params = len(list('rgbstw'))
+		num_write_head_params= len(list('rgbstwea')) 
+		sep_ind = self.num_read * num_read_head_params
+		read_vars = old_vars[:sep_ind]
+		write_vars = old_vars[sep_ind:self.num_write * num_write_head_params]
+		
+
+		# map all the read variables to the read op
+		# TODO: what about memories?
+		read_vecs = [read(*read_vars[i:i + num_read_head_params]) for i in range(0,len(read_vars),num_read_head_params)]
+		write_vecs = [write(*write_vars[i:i + num_write_head_params]) for i in range(0,len(write_vars),num_write_head_params)]
+		
+		# collect read head params for next loop
+		"""
+			Architecture for feedforward controller:
+				input = concat(x_t,rv1,rv2....)
+				con1 = Dense(input,controller_size,'relu')
+				con2 = Dense(con1,controller_size,'relu')
+				out = Dense(con2,out_dim,'relu')
+		"""	
+		with tf.variable_scope(self.scope or 'ntm'):
+			inp = tf.concat([x_t] + read_vecs,-1)
+			con1 = tf.nn.relu(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1)
+			con2 = tf.nn.relu(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2)
+			out = tf.nn.softmax(tf.nn.sw_plus_b(con2,self.W_out,self.b_out)
+			# TODO: dynamic read head graph construction
+			# TODO: put the weight for the controller to the def of the class
+		# TODO: what about write head?	
+	def get_read_vars(self,id = 0):
+		num_var = len(list('rbgstw'))
+		res = self.read_vars[num_var * id: num_var * id + num_var] # k,b,g,s,t,wt
+		assert res != []
+		return res
+	def get_write_vars(self,id = 0):
+		num_var = len(list('rbgstwea'))
+		res = self.write_vars[num_var * id: num_var * id + num_var] # k,b,g,s,t,wt,e,a
+		assert res != []
+		return res
+	def build_haed_op(self,M,read = True):
+		if read:
+			r = tf.Variable(np.zeros(None,self.mem_length))
+			b = tf.Variable(np.zeros(None,1))
+			g = tf.Variable(np.zeros(None,1))
+			s = tf.Variable(np.zeros(None,self.shift_range))
+			t = tf.Variable(np.zeros(None,1))
+			wt = tf.Variable(np.zeros(None,self.num_memory))
+			self.read_vars.append(r)
+			self.read_vars.append(b)
+			self.read_vars.append(g)
+			self.read_vars.append(s)
+			self.read_vars.append(t)
+			self.read_vars.append(wt)
+			return read(r,b,g,s,t,M,wt)
+		else:
+			r = tf.Variable(np.zeros(None,self.mem_length))
+			b = tf.Variable(np.zeros(None,1))
+			g = tf.Variable(np.zeros(None,1))
+			s = tf.Variable(np.zeros(None,self.shift_range))
+			t = tf.Variable(np.zeros(None,1))
+			wt = tf.Variable(np.zeros(None,self.num_memory))
+			e = tf.Variable(np.zeros(None,self.mem_length))
+			a = tf.Variable(np.zeros(None,self.mem_length))
+			self.write_vars.append(r)
+			self.write_vars.append(b)
+			self.write_vars.append(g)
+			self.write_vars.append(s)
+			self.write_vars.append(t)
+			self.write_vars.append(wt)
+			self.write_vars.append(e)
+			self.write_vars.append(a)	
+			return write(r,b,g,s,t,M,wt,e,a)
+
 M = tf.Variable(np.array([[[1,1,1],[2,2,2],[1,1,1],[1,2,1]],[[1,1,1],[2,2,2],[1,1,1],[1,2,1]]]),dtype = tf.float32) # 1,4,3: batch_size,time step,mem_length
 #M = tf.transpose(M,perm = [0,2,1]) # 1,3,4
 wc = tf.Variable([[1,1,1,1],[1,1,1,1]],dtype = tf.float32)
@@ -162,7 +261,7 @@ g = tf.Variable([[0],[0]],dtype = tf.float32) #1,1
 s = tf.Variable([[0,1,0],[0,1,0]],dtype = tf.float32) # 1,3
 t = tf.Variable([[1],[1]],dtype = tf.float32)
 e = tf.Variable([[1.0,1.0,1.0],[1.0,1.0,1.0]])
-a = tf.Variable([[1.0,1.0,0.0],[0.0,0.0,0.0]])
+a = tf.Variable([[1.0,1.0,1.0],[0.0,0.0,0.0]])
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
 	#new_w = read(k,b,g,s,t,M,wc)
