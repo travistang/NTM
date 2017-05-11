@@ -153,9 +153,9 @@ def write(k,b,g,s,t,M,wt,e,a):
 	return tf.multiply(M,e) + a # (b,n,k) as new contents of the memory
 
 class NTM(object):
-	def __init__(self,controller_type,inp_ph,out_dim,num_read,num_write,num_memory,mem_length,controller_size,shit_range,batch_size,scope = None):
+	def __init__(self,controller_type,inp_ph,out_dim,num_read,num_write,num_memory,mem_length,controller_size,shift_range,batch_size,scope = None):
 		self.input_var = inp_ph
-		self.input_dim = tf.shape(self.input_var)[-1]
+		self.input_dim = self.input_var.get_shape().as_list()[-1]
 		self.read_vars = []
 		self.write_vars = []
 		self.out_dim = out_dim
@@ -166,7 +166,7 @@ class NTM(object):
 		self.mem_length = mem_length
 		self.shift_range = shift_range
 		self.controller_dim = controller_size
-		
+		self.scope = scope	
 		# construct graph for read heads
 		""" construct internal graph """
 		"""
@@ -176,7 +176,7 @@ class NTM(object):
 			num_read_head_params = len(list('rgbstw'))
 			num_write_head_params= len(list('rgbstwea')) 
 
-			if controller_type = "feed_forward":
+			if controller_type == "feed_forward":
 
 				self.W_con1 = tf.Variable(np.random.rand(self.num_read * self.num_memory + self.input_dim,self.controller_dim))
 				self.b_con1 = tf.Variable(np.zeros(self.controller_dim,))
@@ -192,7 +192,7 @@ class NTM(object):
 
 	""" Create params of the fully connected layer  """
 	def build_head_params(self,input_dim,read = True):
-		Wr = tf.Variable(np.random.rand(input_dim,mem_length))
+		Wr = tf.Variable(np.random.rand(input_dim,self.mem_length))
 		br = tf.Variable(np.zeros(self.mem_length,))
 		Wb = tf.Variable(np.random.rand(input_dim,1))
 		bb = tf.Variable(np.zeros(1,))
@@ -205,9 +205,9 @@ class NTM(object):
 		if read:
 			self.read_vars += [Wr,br,br,bb,Wg,bg,Ws,bs,Wt,bt]
 		else: # write
-			We = tf.Variable(np.random.rand(input_dim,mem_length))
+			We = tf.Variable(np.random.rand(input_dim,self.mem_length))
 			be = tf.Variable(np.zeros(self.mem_length,))
-			Wa = tf.Variable(np.random.rand(input_dim,mem_length))
+			Wa = tf.Variable(np.random.rand(input_dim,self.mem_length))
 			ba = tf.Variable(np.zeros(self.mem_length,))
 			self.write_vars += [Wr,br,br,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
 
@@ -234,9 +234,9 @@ class NTM(object):
 		"""	
 		with tf.variable_scope(self.scope or 'ntm'):
 			inp = tf.concat([x_t] + read_vecs,-1)
-			con1 = tf.nn.relu(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1)
-			con2 = tf.nn.relu(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2)
-			out = tf.nn.softmax(tf.nn.sw_plus_b(con2,self.W_out,self.b_out)
+			con1 = tf.nn.relu(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1))
+			con2 = tf.nn.relu(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2))
+			out = tf.nn.softmax(tf.nn.sw_plus_b(con2,self.W_out,self.b_out))
 			# TODO: dynamic read head graph construction
 		# TODO: what about write head?	
 
@@ -257,4 +257,5 @@ with tf.Session() as sess:
 	#new_w = read(k,b,g,s,t,M,wc)
 	new_M = write(k,b,g,s,t,M,wc,e,a)
 	print sess.run(new_M)[1]
-	
+	inp = tf.placeholder(tf.float32,(16,40))
+	ntm = NTM('feed_forward',inp,10,1,1,128,20,60,3,16,scope = None)
