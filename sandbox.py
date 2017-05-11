@@ -153,12 +153,13 @@ def write(k,b,g,s,t,M,wt,e,a):
 	return tf.multiply(M,e) + a # (b,n,k) as new contents of the memory
 
 class NTM(object):
-	def __init__(self,controller_type,inp_ph,out_dim,num_read,num_write,num_memory,mem_length,controller_size,shit_range,scope = None):
+	def __init__(self,controller_type,inp_ph,out_dim,num_read,num_write,num_memory,mem_length,controller_size,shit_range,batch_size,scope = None):
 		self.input_var = inp_ph
 		self.input_dim = tf.shape(self.input_var)[-1]
 		self.read_vars = []
 		self.write_vars = []
 		self.out_dim = out_dim
+		self.batch_size = batch_size
 		self.num_read = num_read
 		self.num_write = num_write
 		self.num_memory = num_memory
@@ -167,30 +168,61 @@ class NTM(object):
 		self.controller_dim = controller_size
 		
 		# construct graph for read heads
-		read_op = self.build_head_op(read = True)
-		write_op = self.build_head_op(read = False)
 		""" construct internal graph """
 		"""
 			Structure:
 		"""
-		with tf.variable_scope(self.scope or 'ntm'):
+		with tf.variable_scope(self.scope or 'ntm'):	
+			num_read_head_params = len(list('rgbstw'))
+			num_write_head_params= len(list('rgbstwea')) 
+
 			if controller_type = "feed_forward":
-				# TODO weight
+
+				self.W_con1 = tf.Variable(np.random.rand(self.num_read * self.num_memory + self.input_dim,self.controller_dim))
+				self.b_con1 = tf.Variable(np.zeros(self.controller_dim,))
+				self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim))	
+				self.b_con2 = tf.Variable(np.zeros(self.controller_dim,))
+				self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim))
+				self.b_out = tf.Variable(np.zeros(self.out_dim,))
 			else:
 				raise NotImplementedError('Unsupported controller type: %s' % controller_type)	
+		
+			[self.build_head_params(self.controller_dim,read = True) for _ in range(self.num_read)]
+			[self.build_head_params(self.controller_dim,read = False) for _ in range(self.num_write)]
+
+	""" Create params of the fully connected layer  """
+	def build_head_params(self,input_dim,read = True):
+		Wr = tf.Variable(np.random.rand(input_dim,mem_length))
+		br = tf.Variable(np.zeros(self.mem_length,))
+		Wb = tf.Variable(np.random.rand(input_dim,1))
+		bb = tf.Variable(np.zeros(1,))
+		Wg = tf.Variable(np.random.rand(input_dim,1))
+		bg = tf.Variable(np.zeros(1,))
+		Ws = tf.Variable(np.random.rand(input_dim,self.shift_range))
+		bs = tf.Variable(np.zeros(self.shift_range,))
+		Wt = tf.Variable(np.random.rand(input_dim,1))
+		bt = tf.Variable(np.zeros(1,))
+		if read:
+			self.read_vars += [Wr,br,br,bb,Wg,bg,Ws,bs,Wt,bt]
+		else: # write
+			We = tf.Variable(np.random.rand(input_dim,mem_length))
+			be = tf.Variable(np.zeros(self.mem_length,))
+			Wa = tf.Variable(np.random.rand(input_dim,mem_length))
+			ba = tf.Variable(np.zeros(self.mem_length,))
+			self.write_vars += [Wr,br,br,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
+
 	def main_loop(self,old_vars,x_t):
 		# extract all variables
-		num_read_head_params = len(list('rgbstw'))
-		num_write_head_params= len(list('rgbstwea')) 
+		num_read_head_params = len(list('rgbstw')) * 2 # weight and bias
+		num_write_head_params= len(list('rgbstwea')) * 2 # weight and bias
 		sep_ind = self.num_read * num_read_head_params
-		read_vars = old_vars[:sep_ind]
-		write_vars = old_vars[sep_ind:self.num_write * num_write_head_params]
-		
+		old_read_vars = old_read_vars[:sep_ind]
+		old_write_vars = old_write_vars[sep_ind:self.num_write * num_write_head_params]	
 
 		# map all the read variables to the read op
 		# TODO: what about memories?
-		read_vecs = [read(*read_vars[i:i + num_read_head_params]) for i in range(0,len(read_vars),num_read_head_params)]
-		write_vecs = [write(*write_vars[i:i + num_write_head_params]) for i in range(0,len(write_vars),num_write_head_params)]
+		read_vecs = [read(*read_vars[i:i + num_read_head_params]) for i in range(0,len(old_read_vars),num_read_head_params)]
+		write_vecs = [write(*write_vars[i:i + num_write_head_params]) for i in range(0,len(old_write_vars),num_write_head_params)]
 		
 		# collect read head params for next loop
 		"""
@@ -206,51 +238,9 @@ class NTM(object):
 			con2 = tf.nn.relu(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2)
 			out = tf.nn.softmax(tf.nn.sw_plus_b(con2,self.W_out,self.b_out)
 			# TODO: dynamic read head graph construction
-			# TODO: put the weight for the controller to the def of the class
 		# TODO: what about write head?	
-	def get_read_vars(self,id = 0):
-		num_var = len(list('rbgstw'))
-		res = self.read_vars[num_var * id: num_var * id + num_var] # k,b,g,s,t,wt
-		assert res != []
-		return res
-	def get_write_vars(self,id = 0):
-		num_var = len(list('rbgstwea'))
-		res = self.write_vars[num_var * id: num_var * id + num_var] # k,b,g,s,t,wt,e,a
-		assert res != []
-		return res
-	def build_haed_op(self,M,read = True):
-		if read:
-			r = tf.Variable(np.zeros(None,self.mem_length))
-			b = tf.Variable(np.zeros(None,1))
-			g = tf.Variable(np.zeros(None,1))
-			s = tf.Variable(np.zeros(None,self.shift_range))
-			t = tf.Variable(np.zeros(None,1))
-			wt = tf.Variable(np.zeros(None,self.num_memory))
-			self.read_vars.append(r)
-			self.read_vars.append(b)
-			self.read_vars.append(g)
-			self.read_vars.append(s)
-			self.read_vars.append(t)
-			self.read_vars.append(wt)
-			return read(r,b,g,s,t,M,wt)
-		else:
-			r = tf.Variable(np.zeros(None,self.mem_length))
-			b = tf.Variable(np.zeros(None,1))
-			g = tf.Variable(np.zeros(None,1))
-			s = tf.Variable(np.zeros(None,self.shift_range))
-			t = tf.Variable(np.zeros(None,1))
-			wt = tf.Variable(np.zeros(None,self.num_memory))
-			e = tf.Variable(np.zeros(None,self.mem_length))
-			a = tf.Variable(np.zeros(None,self.mem_length))
-			self.write_vars.append(r)
-			self.write_vars.append(b)
-			self.write_vars.append(g)
-			self.write_vars.append(s)
-			self.write_vars.append(t)
-			self.write_vars.append(wt)
-			self.write_vars.append(e)
-			self.write_vars.append(a)	
-			return write(r,b,g,s,t,M,wt,e,a)
+
+
 
 M = tf.Variable(np.array([[[1,1,1],[2,2,2],[1,1,1],[1,2,1]],[[1,1,1],[2,2,2],[1,1,1],[1,2,1]]]),dtype = tf.float32) # 1,4,3: batch_size,time step,mem_length
 #M = tf.transpose(M,perm = [0,2,1]) # 1,3,4
