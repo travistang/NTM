@@ -90,13 +90,11 @@ def shift_location(s,w):
 	assert_rank(s,2)
 	assert_rank(w,2)
 	pad_length = tf.shape(s)[-1] / 2
-	w_shape = tf.shape(w)
+	w_shape = w.get_shape().as_list()
 	batch_size = w_shape[0]
 	weight_length = w_shape[-1]
 	w = tf.concat([tf.slice(w,[0,weight_length - pad_length],[batch_size,pad_length]),w,tf.slice(w,[0,0],[batch_size,pad_length])],-1)	
 	""" prepare for conv 2d"""
-	debug_shape(w,'w')
-	debug_shape(s,'s')
 	w = tf.expand_dims(w,1) # b,1,r
 	w = tf.expand_dims(w,-1) # b, 1, r ,1: "Batch",h,w,in_channel
 	s = tf.expand_dims(s,-1) # b,s,1
@@ -109,6 +107,11 @@ def shift_location(s,w):
 	res = [tf.squeeze(tf.squeeze(r,0),-1) for r in res]
 	res = tf.stack(res,0)
 	res = tf.squeeze(res,1)
+	""" 
+		enforce the shape of the resultant tensor 
+		from (batch_size, ?) to (batch_size,memory_size) 
+	"""
+	res = tf.reshape(res,w_shape)
 	return res
 """
 	Input:
@@ -138,7 +141,7 @@ def read(k,b,g,s,t,M,wt):
 	w = get_weight(k,b,g,s,t,M,wt)
 	return linear_combination(w,M)
 
-def write(w,e,a):
+def write(w,M,e,a):
 	e = tf.clip_by_value(e,0,1) # values of e should be restricted to [0,1]
 	assert_rank(e,2) # e should have shape (b,k)
 	assert_rank(a,2) # a should have shape (b,k)
@@ -149,12 +152,12 @@ def write(w,e,a):
 	""" add """
 	a = tf.expand_dims(a,1) # (b,1,k)
 	a = tf.matmul(w,a) # (b,n,k)
-	return tf.multiply(M,e) + a # (b,n,k) as new contents of the memory
-
+	res = tf.multiply(M,e) + a # (b,n,k) as new contents of the memory
+	return res
 class NTM(object):
-	def __init__(self,controller_type,inp_ph,out_dim,num_read,num_write,num_memory,mem_length,controller_size,shift_range,batch_size,scope = None):
-		self.input_var = inp_ph
-		self.input_dim = self.input_var.get_shape().as_list()[-1]
+	def __init__(self,controller_type,input_dim,out_dim,num_read,num_write,num_memory,mem_length,controller_size,shift_range,batch_size,scope = None):
+		self.input_dim = input_dim 
+		self.controller_vars = []
 		self.read_vars = [] # contains the weight of the fc layers of the read head
 		self.write_vars = [] # contains the weight of the fc layers of the write head
 		self.out_dim = out_dim
@@ -177,47 +180,64 @@ class NTM(object):
 
 			if controller_type == "feed_forward":
 
-				self.W_con1 = tf.Variable(np.random.rand(self.num_read * self.num_memory + self.input_dim,self.controller_dim))
-				self.b_con1 = tf.Variable(np.zeros(self.controller_dim,))
-				self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim))	
-				self.b_con2 = tf.Variable(np.zeros(self.controller_dim,))
-				self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim))
-				self.b_out = tf.Variable(np.zeros(self.out_dim,))
+				self.W_con1 = tf.Variable(np.random.rand(self.mem_length * self.num_read + self.input_dim,self.controller_dim),dtype=tf.float32)
+				self.b_con1 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32)
+				self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim),dtype=tf.float32)	
+				self.b_con2 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32)
+				self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim),dtype=tf.float32)
+				self.b_out = tf.Variable(np.zeros(self.out_dim,),dtype=tf.float32)
+				# store all the variables above
+				self.controller_vars = [self.W_con1,self.b_con1,self.W_con2,self.b_con2,self.W_out,self.b_out]
 			else:
 				raise NotImplementedError('Unsupported controller type: %s' % controller_type)	
 		
 			[self.build_head_params(self.controller_dim,read = True) for _ in range(self.num_read)]
 			[self.build_head_params(self.controller_dim,read = False) for _ in range(self.num_write)]
 
+
+	"""
+		Return the collection of traininable variables of the NTM
+	"""
+	def get_trainable_params(self):
+		return self.controller_vars + self.read_vars + self.write_vars
+
 	""" Create params of the fully connected layer  """
 	def build_head_params(self,input_dim,read = True):
-		Wr = tf.Variable(np.random.rand(input_dim,self.mem_length))
-		br = tf.Variable(np.zeros(self.mem_length,))
-		Wb = tf.Variable(np.random.rand(input_dim,1))
-		bb = tf.Variable(np.zeros(1,))
-		Wg = tf.Variable(np.random.rand(input_dim,1))
-		bg = tf.Variable(np.zeros(1,))
-		Ws = tf.Variable(np.random.rand(input_dim,self.shift_range))
-		bs = tf.Variable(np.zeros(self.shift_range,))
-		Wt = tf.Variable(np.random.rand(input_dim,1))
-		bt = tf.Variable(np.zeros(1,))
+		Wr = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
+		br = tf.Variable(np.zeros(self.mem_length,),dtype = tf.float32)
+		Wb = tf.Variable(np.random.rand(input_dim,1),dtype = tf.float32)
+		bb = tf.Variable(np.zeros(1,),dtype = tf.float32)
+		Wg = tf.Variable(np.random.rand(input_dim,1),dtype = tf.float32)
+		bg = tf.Variable(np.zeros(1,),dtype = tf.float32)
+		Ws = tf.Variable(np.random.rand(input_dim,self.shift_range),dtype = tf.float32)
+		bs = tf.Variable(np.zeros(self.shift_range,),dtype = tf.float32)
+		Wt = tf.Variable(np.random.rand(input_dim,1),dtype = tf.float32)
+		bt = tf.Variable(np.zeros(1,),dtype = tf.float32)
 		if read:
-			self.read_vars += [Wr,br,br,bb,Wg,bg,Ws,bs,Wt,bt]
+			self.read_vars += [Wr,br,Wb,bb,Wg,bg,Ws,bs,Wt,bt]
 		else: # write
-			We = tf.Variable(np.random.rand(input_dim,self.mem_length))
-			be = tf.Variable(np.zeros(self.mem_length,))
-			Wa = tf.Variable(np.random.rand(input_dim,self.mem_length))
-			ba = tf.Variable(np.zeros(self.mem_length,))
-			self.write_vars += [Wr,br,br,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
+			We = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
+			be = tf.Variable(np.zeros(self.mem_length,),dtype = tf.float32)
+			Wa = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
+			ba = tf.Variable(np.zeros(self.mem_length,),dtype = tf.float32)
+			self.write_vars += [Wr,br,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
 
 	""" 
 		get a tuple of tensors as the initial state of tf.scan function
 		the tuple will be in the format of (M,(r1,r2,...rn),(rw1,rw2,...rwn),(ww1,ww2,...wwm)
 		where num_read = n, num_write = m and ri is the read vector emitted by read head i, rwi,wwi are read/write weights evaluated by previous weights.
 	"""
-	def initial_state(self):
-		pass
-
+	def initial_state(self,inp_ph):
+		seq_len = inp_ph.size()
+		output = tf.TensorArray(tf.float32,seq_len,dynamic_size = False)
+		count = tf.constant(0)
+		M0 = tf.zeros((self.batch_size,self.num_memory,self.mem_length))
+		rvs = tuple([tf.zeros((self.batch_size,self.mem_length),dtype=tf.float32) for _ in range(self.num_read)])
+		rws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_read)])
+		wws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_write)])
+		return [output,count,M0,rvs,rws,wws,inp_ph]
+		
+		
 	"""
 		Main loop of NTM
 		To be applied on tf.scan.
@@ -234,7 +254,8 @@ class NTM(object):
 			4. write memory M
 			5. return new memory and all vectors, weights
 	"""
-	def main_loop(self,(M_t,rts,rw_ts,ww_ts),(x_t)):
+	def main_loop(self,output,count,M_t,rts,rw_ts,ww_ts,in_tensor):
+		x_t = in_tensor.read(count)
 		# collect read head params for next loop
 		"""
 			Architecture for feedforward controller:
@@ -242,12 +263,13 @@ class NTM(object):
 				con1 = Dense(input,controller_size,'relu')
 				con2 = Dense(con1,controller_size,'relu')
 				out = Dense(con2,out_dim,'relu')
-		"""	
+		"""
 		with tf.variable_scope(self.scope or 'ntm'):
-			inp = tf.concat([x_t] + rts,-1)
+			inp = tf.concat([x_t] + list(rts),-1)
 			con1 = tf.nn.relu(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1))
 			con2 = tf.nn.relu(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2))
-			out = tf.nn.softmax(tf.nn.sw_plus_b(con2,self.W_out,self.b_out))
+			out = tf.nn.softmax(tf.nn.xw_plus_b(con2,self.W_out,self.b_out))
+	
 			new_read_weights = []
 			new_read_vectors = []
 			new_write_weights = []
@@ -262,19 +284,23 @@ class NTM(object):
 				""" Construct write heads. The build_write_head function should return the write weight op """
 				ww_op,ea = self.build_write_head(con2,M_t,ww_ts,_)
 				new_write_weights.append(ww_op)
-				e_tuples.append(write_op)
+				ea_tuples.append(ea)
 	
 		# turn list to tuples
 			new_read_weights = tuple(new_read_weights)
 			new_read_vectors = tuple(new_read_vectors)	
 			new_write_weights = tuple(new_write_weights)
+
 		# write memory
 		# apply write weight operations to the memory one by one
 		# TODO: is this ok?!
+			M = M_t
 			for w,(e,a) in zip(new_write_weights,ea_tuples):
-				M = write(w,e,a)
-		# TODO: return everything
+				M = write(w,M,e,a)
 
+		# prepare for next state
+			output = output.write(count,out)
+		return [output,count + 1,M,new_read_vectors,new_read_weights,new_write_weights,in_tensor]
 	"""
 		Construct the operators from inp_ph tensor to read weight
 		Input:
@@ -304,7 +330,6 @@ class NTM(object):
 		rw = get_weight(k,b,g,s,t,M,wt)
 		# read ops
 		rv = linear_combination(rw,M)	
-		
 		return (rv,rw)	
 	"""
 		Similar to build_read_head,except the output is a tuple of 2 tensors ( write weights,write_op)
@@ -312,7 +337,7 @@ class NTM(object):
 	def build_write_head(self,inp_ph,M,ww_t,id):
 		# extract read vars ( The fc weights)
 		num_vars = 14 # k,b,g,s,t,e,a, each has W and b
-		vars = self.read_vars[id * num_vars: (id + 1) * num_vars]	
+		vars = self.write_vars[id * num_vars: (id + 1) * num_vars]	
 		Wk,bk,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba = vars
 		wt = ww_t[id]
 		# construct subgraph
@@ -322,12 +347,44 @@ class NTM(object):
 		s = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Ws,bs))
 		t = 1 + tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wt,bt))
 		e = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,We,be))
-		a = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,We,be))
+		a = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wa,ba))
 		
 		# weight ops
 		ww = get_weight(k,b,g,s,t,M,wt)
 		
 		return (ww,(e,a))
+	"""
+		construct tf.while_loop that consumes the input in ph
+		The input placeholder will first be unstacked into a TensorArray,
+		the resultant vectors will then be consumed in the while loop
+		The output TensorArray will be stacked before return
+		Input:
+			the input placeholder of shape (seq_len,batch_size,input_dim)
+		Output:
+			a list of tensors:
+				1. output tensor of shape (seq_len,batch_size,output_dim)
+				2. The read vectors emitted by the read heads after consuming the last input
+				3. The read weights
+				4. The write weights
+				5. The original input
+	"""
+	def construct_run_var(self,inp_ph):
+		assert_rank(inp_ph,3)
+		inp_shape = inp_ph.get_shape().as_list()
+		assert inp_shape[1] == self.batch_size
+		assert inp_shape[2] == self.input_dim
+		seq_len = inp_shape[0]
+		# decompose the input tensor and store into a TensorArray
+		inp_ph = tf.TensorArray(tf.float32,seq_len,clear_after_read = False).unstack(inp_ph)
+		# prepare for while loop
+		loop_vars = self.initial_state(inp_ph)
+		cond = lambda output,count,M,new_read_vectors,new_read_weights,new_write_weights,inp: tf.less(count,seq_len)
+		res = tf.while_loop(cond,self.main_loop,loop_vars)
+		# combine the output TensorArray to Tensor
+		res[0] = res[0].stack()
+		# combine the input TensorArray to Tensor
+		res[-1] = res[-1].stack()
+		return res	
 
 M = tf.Variable(np.array([[[1,1,1],[2,2,2],[1,1,1],[1,2,1]],[[1,1,1],[2,2,2],[1,1,1],[1,2,1]]]),dtype = tf.float32) # 1,4,3: batch_size,time step,mem_length
 #M = tf.transpose(M,perm = [0,2,1]) # 1,3,4
@@ -342,5 +399,13 @@ a = tf.Variable([[1.0,1.0,1.0],[0.0,0.0,0.0]])
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
 	#new_w = read(k,b,g,s,t,M,wc)
-	inp = tf.placeholder(tf.float32,(16,40))
-	ntm = NTM('feed_forward',inp,10,1,1,128,20,60,3,16,scope = None)
+	batch_size = 16
+	input_dim = 40
+	output_dim = 10
+	seq_len = 100
+	mem_dim = 20
+	inp = tf.placeholder(tf.float32,(seq_len,batch_size,input_dim))
+	ntm = NTM('feed_forward',input_dim,output_dim,1,1,128,mem_dim,60,3,batch_size,scope = None)
+	run_var = ntm.construct_run_var(inp)
+	sess.run(tf.global_variables_initializer())
+	print sess.run(run_var[0],feed_dict = {inp: np.zeros((seq_len,batch_size,input_dim))})
