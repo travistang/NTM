@@ -2,10 +2,15 @@
 import numpy as np
 import tensorflow as tf
 
+def assert_rank(t,rank):
+	assert rank == len(t.get_shape().as_list())
 def fprint(s):
     print '{}\r'.format(s)
 def debug_shape(t,name = None):
 	print '%s has shape %s' % (name or t.name,t.get_shape().as_list())
+
+def debug_type(t,name):	
+	print '%s has type %s' % (name or t.name,t.dtype)
 
 def log_dense_weights(ts):
     summaries = []
