@@ -16,7 +16,8 @@ class NTM(object):
 		self.mem_length = mem_length
 		self.shift_range = shift_range
 		self.controller_dim = controller_size
-		self.scope = scope	
+		self.scope = scope
+
 		# construct graph for read heads
 		""" construct internal graph """
 		"""
@@ -52,7 +53,7 @@ class NTM(object):
 	""" Create params of the fully connected layer  """
 	def build_head_params(self,input_dim,read = True):
 		Wr = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
-		br = tf.Variable(np.zeros(self.mem_length,),dtype = tf.float32)
+		br = tf.Variable(np.ones(self.mem_length,) * 1e-2,dtype = tf.float32)
 		Wb = tf.Variable(np.random.rand(input_dim,1),dtype = tf.float32)
 		bb = tf.Variable(np.zeros(1,),dtype = tf.float32)
 		Wg = tf.Variable(np.random.rand(input_dim,1),dtype = tf.float32)
@@ -67,7 +68,7 @@ class NTM(object):
 			We = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
 			be = tf.Variable(np.zeros(self.mem_length,),dtype = tf.float32)
 			Wa = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
-			ba = tf.Variable(np.zeros(self.mem_length,),dtype = tf.float32)
+			ba = tf.Variable(np.ones(self.mem_length,) * 1e-2,dtype = tf.float32)
 			self.write_vars += [Wr,br,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
 
 	""" 
@@ -79,10 +80,10 @@ class NTM(object):
 		seq_len = inp_ph.size()
 		output = tf.TensorArray(tf.float32,seq_len,dynamic_size = False)
 		count = tf.constant(0)
-		M0 = tf.zeros((self.batch_size,self.num_memory,self.mem_length))
-		rvs = tuple([tf.zeros((self.batch_size,self.mem_length),dtype=tf.float32) for _ in range(self.num_read)])
-		rws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_read)])
-		wws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_write)])
+		M0 = tf.Variable(np.random.rand(self.batch_size,self.num_memory,self.mem_length) * 1e-3,dtype = tf.float32)
+		rvs = tuple([tf.Variable(np.random.rand(self.batch_size,self.mem_length) * 1e-2,dtype=tf.float32) for _ in range(self.num_read)])
+		rws = tuple([tf.Variable(np.random.rand(self.batch_size,self.num_memory) * 1e-2,dtype=tf.float32) for _ in range(self.num_read)])
+		wws = tuple([tf.Variable(np.random.rand(self.batch_size,self.num_memory) * 1e-2,dtype=tf.float32) for _ in range(self.num_write)])
 		return [output,count,M0,rvs,rws,wws,inp_ph]
 		
 		
@@ -103,6 +104,8 @@ class NTM(object):
 			5. return new memory and all vectors, weights
 	"""
 	def main_loop(self,output,count,M_t,rts,rw_ts,ww_ts,in_tensor):
+		# logging the tensors
+		
 		x_t = in_tensor.read(count)
 		# collect read head params for next loop
 		"""
@@ -234,26 +237,72 @@ class NTM(object):
 		res[-1] = res[-1].stack()
 		return res	
 
-M = tf.Variable(np.array([[[1,1,1],[2,2,2],[1,1,1],[1,2,1]],[[1,1,1],[2,2,2],[1,1,1],[1,2,1]]]),dtype = tf.float32) # 1,4,3: batch_size,time step,mem_length
-#M = tf.transpose(M,perm = [0,2,1]) # 1,3,4
-wc = tf.Variable([[1,1,1,1],[1,1,1,1]],dtype = tf.float32)
-k = tf.Variable([[1,1,1],[1,1,1]],dtype = tf.float32) # 1,3
-b = tf.Variable([[1],[1]],dtype = tf.float32) # 1,1
-g = tf.Variable([[0],[0]],dtype = tf.float32) #1,1
-s = tf.Variable([[0,1,0],[0,1,0]],dtype = tf.float32) # 1,3
-t = tf.Variable([[1],[1]],dtype = tf.float32)
-e = tf.Variable([[1.0,1.0,1.0],[1.0,1.0,1.0]])
-a = tf.Variable([[1.0,1.0,1.0],[0.0,0.0,0.0]])
+# M = tf.Variable(np.array([[[1,1,1],[2,2,2],[1,1,1],[1,2,1]],[[1,1,1],[2,2,2],[1,1,1],[1,2,1]]]),dtype = tf.float32) # 1,4,3: batch_size,time step,mem_length
+# #M = tf.transpose(M,perm = [0,2,1]) # 1,3,4
+# wc = tf.Variable([[1,1,1,1],[1,1,1,1]],dtype = tf.float32)
+# k = tf.Variable([[1,1,1],[1,1,1]],dtype = tf.float32) # 1,3
+# b = tf.Variable([[1],[1]],dtype = tf.float32) # 1,1
+# g = tf.Variable([[0],[0]],dtype = tf.float32) #1,1
+# s = tf.Variable([[0,1,0],[0,1,0]],dtype = tf.float32) # 1,3
+# t = tf.Variable([[1],[1]],dtype = tf.float32)
+# e = tf.Variable([[1.0,1.0,1.0],[1.0,1.0,1.0]])
+# a = tf.Variable([[1.0,1.0,1.0],[0.0,0.0,0.0]])
+def generate_copy_data(batch_size,min_length,max_length,data_dim):
+	inp_arr = np.zeros((max_length * 2 + 1,batch_size))
+	out_arr = np.copy(inp_arr)
+	for b in range(batch_size):
+		# generate the sequence length for the batch
+		data_length = np.random.randint(min_length,max_length)
+		inp_pattern = np.random.randint(1,data_dim,(data_length,))
+		# insert input
+		inp_arr[:data_length,b] = inp_pattern
+		out_arr[data_length + 1:2 * data_length + 1,b] = inp_pattern
+
+	return inp_arr,out_arr
+
+
 with tf.Session() as sess:
-	sess.run(tf.global_variables_initializer())
-	#new_w = read(k,b,g,s,t,M,wc)
 	batch_size = 16
-	input_dim = 40
-	output_dim = 10
-	seq_len = 100
+	input_dim = 8
+	output_dim = input_dim
+	seq_len = 11
 	mem_dim = 20
-	inp = tf.placeholder(tf.float32,(seq_len,batch_size,input_dim))
-	ntm = NTM('feed_forward',input_dim,output_dim,1,1,128,mem_dim,60,3,batch_size,scope = None)
+	controller_size = 20
+	org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
+	org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
+
+	inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
+	target = tf.one_hot(org_target,input_dim,axis = -1,dtype = tf.float32)
+
+	ntm = NTM('feed_forward',input_dim,output_dim,1,1,128,mem_dim,controller_size,3,batch_size,scope = None)
 	run_var = ntm.construct_run_var(inp)
+	ntm_out = run_var[0]
+	fin_memory = run_var[2]
+
+	loss = tf.contrib.seq2seq.sequence_loss(
+			tf.transpose(ntm_out,perm = [1,0,2]), # logits
+			tf.cast(tf.transpose(org_target),tf.int32), # targets (of indices)
+			tf.ones((batch_size,seq_len))) # weights
+
+	opt = tf.train.RMSPropOptimizer(0.001)
+	gav = opt.compute_gradients(loss,ntm.get_trainable_params())
+	gav = [(tf.clip_by_norm(g,1),v) for (g,v) in gav]
+	train_op = opt.apply_gradients(gav)
+	# copy task
 	sess.run(tf.global_variables_initializer())
-	print sess.run(run_var[0],feed_dict = {inp: np.zeros((seq_len,batch_size,input_dim))})
+
+	# logging stuff
+	writer = tf.summary.FileWriter('tmp/ntm',graph = sess.graph)
+	# summaries
+	tf.summary.scalar('loss',loss)
+	tf.summary.image('input',tf.expand_dims(inp,-1))
+	tf.summary.image('output',tf.expand_dims(ntm_out,-1))
+	tf.summary.image('memory',tf.expand_dims(fin_memory,-1))
+	sums = tf.summary.merge_all()
+	for epoch in range(5000):
+		inp_pattern,oup_pattern = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+		#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
+		summaries,loss_val, _ = sess.run([sums,loss,train_op],feed_dict = {org_input: inp_pattern,org_target: oup_pattern})
+		writer.add_summary(summaries,epoch)
+		print 'epoch: %d, loss %f' % (epoch,loss_val)
+	

@@ -41,3 +41,23 @@ def make_masks(batch_size,seq_length):
     res[:,data_len + 1:] = 1
     return res
 
+def to_one_hot(t,data_len):
+	return tf.one_hot(t,data_len,axis = -1)
+
+def to_label(t):
+	return tf.argmax(t,axis = -1)
+
+def generate_copy_data(batch_size,min_seq_length,max_seq_length,data_dim):
+	inputs = []
+	outputs = []
+	for _ in range(batch_size):
+		data_len = np.random.randint(min_seq_length,max_seq_length)
+		seq = np.random.randint(1,data_dim,(data_len,))
+		# add stop symbol
+		inp = np.concatenate((seq,[0 for i in range(max_seq_length - data_len + 1)]))
+		# replicate data
+		out = np.concatenate(([0 for i in range(max_seq_length - data_len + 1)],seq))
+		inputs.append(inp)
+		outputs.append(out)
+	# return (time_step,batch_size, 1)
+	return np.stack(inputs,axis = 1),np.stack(outputs,axis = 1)
