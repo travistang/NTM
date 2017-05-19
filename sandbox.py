@@ -53,7 +53,7 @@ class NTM(object):
 	""" Create params of the fully connected layer  """
 	def build_head_params(self,input_dim,read = True):
 		Wr = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
-		br = tf.Variable(np.ones(self.mem_length,) * 1e-2,dtype = tf.float32)
+		br = tf.Variable(np.ones(self.mem_length,) * 1e-1,dtype = tf.float32)
 		Wb = tf.Variable(np.random.rand(input_dim,1),dtype = tf.float32)
 		bb = tf.Variable(np.zeros(1,),dtype = tf.float32)
 		Wg = tf.Variable(np.random.rand(input_dim,1),dtype = tf.float32)
@@ -68,7 +68,7 @@ class NTM(object):
 			We = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
 			be = tf.Variable(np.zeros(self.mem_length,),dtype = tf.float32)
 			Wa = tf.Variable(np.random.rand(input_dim,self.mem_length),dtype = tf.float32)
-			ba = tf.Variable(np.ones(self.mem_length,) * 1e-2,dtype = tf.float32)
+			ba = tf.Variable(np.ones(self.mem_length,) * 1e-1,dtype = tf.float32)
 			self.write_vars += [Wr,br,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
 
 	""" 
@@ -80,7 +80,7 @@ class NTM(object):
 		seq_len = inp_ph.size()
 		output = tf.TensorArray(tf.float32,seq_len,dynamic_size = False)
 		count = tf.constant(0)
-		M0 = tf.Variable(np.random.rand(self.batch_size,self.num_memory,self.mem_length) * 1e-3,dtype = tf.float32)
+		M0 = tf.Variable(np.random.rand(self.batch_size,self.num_memory,self.mem_length) * 1e-1,dtype = tf.float32)
 		rvs = tuple([tf.Variable(np.random.rand(self.batch_size,self.mem_length) * 1e-2,dtype=tf.float32) for _ in range(self.num_read)])
 		rws = tuple([tf.Variable(np.random.rand(self.batch_size,self.num_memory) * 1e-2,dtype=tf.float32) for _ in range(self.num_read)])
 		wws = tuple([tf.Variable(np.random.rand(self.batch_size,self.num_memory) * 1e-2,dtype=tf.float32) for _ in range(self.num_write)])
@@ -117,9 +117,9 @@ class NTM(object):
 		"""
 		with tf.variable_scope(self.scope or 'ntm'):
 			inp = tf.concat([x_t] + list(rts),-1)
-			con1 = tf.nn.relu(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1))
-			con2 = tf.nn.relu(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2))
-			out = tf.nn.softmax(tf.nn.xw_plus_b(con2,self.W_out,self.b_out))
+			con1 = tf.nn.sigmoid(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1))
+			con2 = tf.nn.sigmoid(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2))
+			out = tf.nn.xw_plus_b(con2,self.W_out,self.b_out)
 	
 			new_read_weights = []
 			new_read_vectors = []
@@ -171,10 +171,10 @@ class NTM(object):
 		Wk,bk,Wb,bb,Wg,bg,Ws,bs,Wt,bt = vars
 		wt = rw_t[id]	
 		# construct subgraph
-		k = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wk,bk))
+		k = tf.nn.xw_plus_b(inp_ph,Wk,bk)
 		b = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wb,bb))
 		g = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,Wg,bg))
-		s = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Ws,bs))
+		s = tf.nn.xw_plus_b(inp_ph,Ws,bs)
 		t = 1 + tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wt,bt))
 		
 		# weight ops
@@ -192,10 +192,10 @@ class NTM(object):
 		Wk,bk,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba = vars
 		wt = ww_t[id]
 		# construct subgraph
-		k = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wk,bk))
+		k = tf.nn.xw_plus_b(inp_ph,Wk,bk)
 		b = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wb,bb))
 		g = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,Wg,bg))
-		s = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Ws,bs))
+		s = tf.nn.xw_plus_b(inp_ph,Ws,bs)
 		t = 1 + tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wt,bt))
 		e = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,We,be))
 		a = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wa,ba))
@@ -249,16 +249,20 @@ class NTM(object):
 # a = tf.Variable([[1.0,1.0,1.0],[0.0,0.0,0.0]])
 def generate_copy_data(batch_size,min_length,max_length,data_dim):
 	inp_arr = np.zeros((max_length * 2 + 1,batch_size))
-	out_arr = np.copy(inp_arr)
+	out_arr = np.zeros((max_length * 2 + 1,batch_size))
+	mask = np.zeros((max_length * 2 + 1,batch_size,data_dim))
 	for b in range(batch_size):
 		# generate the sequence length for the batch
 		data_length = np.random.randint(min_length,max_length)
 		inp_pattern = np.random.randint(1,data_dim,(data_length,))
 		# insert input
 		inp_arr[:data_length,b] = inp_pattern
+		inp_arr[data_length,b] = 1
 		out_arr[data_length + 1:2 * data_length + 1,b] = inp_pattern
+		out_arr[data_length,b] = 1
 
-	return inp_arr,out_arr
+		mask[data_length + 1:2 * data_length + 1,b,:] = 1
+	return inp_arr,out_arr,mask
 
 
 with tf.Session() as sess:
@@ -279,14 +283,17 @@ with tf.Session() as sess:
 	ntm_out = run_var[0]
 	fin_memory = run_var[2]
 
-	loss = tf.contrib.seq2seq.sequence_loss(
-			tf.transpose(ntm_out,perm = [1,0,2]), # logits
-			tf.cast(tf.transpose(org_target),tf.int32), # targets (of indices)
-			tf.ones((batch_size,seq_len))) # weights
+	mask_ph = tf.placeholder(tf.float32,(seq_len,batch_size,input_dim))
+	loss = tf.norm(tf.multiply(target - ntm_out,mask_ph)) * tf.reduce_mean(mask_ph)
+	# loss = tf.contrib.seq2seq.sequence_loss(
+	# 		tf.transpose(ntm_out,perm = [1,0,2]), # logits
+	# 		tf.cast(tf.transpose(org_target),tf.int32), # targets (of indices)
+	# 		tf.cast(tf.sign(tf.cast(org_target,tf.float32)),tf.float32)) # weights
 
-	opt = tf.train.RMSPropOptimizer(0.001)
+	opt = tf.train.RMSPropOptimizer(0.0001)
 	gav = opt.compute_gradients(loss,ntm.get_trainable_params())
 	gav = [(tf.clip_by_norm(g,1),v) for (g,v) in gav]
+	grads,vars = zip(*gav)
 	train_op = opt.apply_gradients(gav)
 	# copy task
 	sess.run(tf.global_variables_initializer())
@@ -296,13 +303,23 @@ with tf.Session() as sess:
 	# summaries
 	tf.summary.scalar('loss',loss)
 	tf.summary.image('input',tf.expand_dims(inp,-1))
+	tf.summary.image('target',tf.expand_dims(target,-1))
 	tf.summary.image('output',tf.expand_dims(ntm_out,-1))
 	tf.summary.image('memory',tf.expand_dims(fin_memory,-1))
+	for g in grads:
+		shape = g.get_shape().as_list()
+		if len(shape) == 2:
+			tf.summary.image(g.name,tf.expand_dims(tf.expand_dims(g,-1),0))
+		
 	sums = tf.summary.merge_all()
 	for epoch in range(5000):
-		inp_pattern,oup_pattern = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+		inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
 		#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
-		summaries,loss_val, _ = sess.run([sums,loss,train_op],feed_dict = {org_input: inp_pattern,org_target: oup_pattern})
+		summaries,loss_val, _ = sess.run([sums,loss,train_op],
+			feed_dict = {
+				org_input: inp_pattern,
+				org_target: oup_pattern,
+				mask_ph: mask})
 		writer.add_summary(summaries,epoch)
 		print 'epoch: %d, loss %f' % (epoch,loss_val)
 	
