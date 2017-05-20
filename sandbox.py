@@ -80,10 +80,10 @@ class NTM(object):
 		seq_len = inp_ph.size()
 		output = tf.TensorArray(tf.float32,seq_len,dynamic_size = False)
 		count = tf.constant(0)
-		M0 = tf.Variable(np.random.rand(self.batch_size,self.num_memory,self.mem_length) * 1e-1,dtype = tf.float32)
-		rvs = tuple([tf.Variable(np.random.rand(self.batch_size,self.mem_length) * 1e-2,dtype=tf.float32) for _ in range(self.num_read)])
-		rws = tuple([tf.Variable(np.random.rand(self.batch_size,self.num_memory) * 1e-2,dtype=tf.float32) for _ in range(self.num_read)])
-		wws = tuple([tf.Variable(np.random.rand(self.batch_size,self.num_memory) * 1e-2,dtype=tf.float32) for _ in range(self.num_write)])
+		M0 = tf.Variable(np.zeros((self.batch_size,self.num_memory,self.mem_length)),dtype = tf.float32)
+		rvs = tuple([tf.zeros((self.batch_size,self.mem_length),dtype=tf.float32) for _ in range(self.num_read)])
+		rws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_read)])
+		wws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_write)])
 		return [output,count,M0,rvs,rws,wws,inp_ph]
 		
 		
@@ -237,16 +237,6 @@ class NTM(object):
 		res[-1] = res[-1].stack()
 		return res	
 
-# M = tf.Variable(np.array([[[1,1,1],[2,2,2],[1,1,1],[1,2,1]],[[1,1,1],[2,2,2],[1,1,1],[1,2,1]]]),dtype = tf.float32) # 1,4,3: batch_size,time step,mem_length
-# #M = tf.transpose(M,perm = [0,2,1]) # 1,3,4
-# wc = tf.Variable([[1,1,1,1],[1,1,1,1]],dtype = tf.float32)
-# k = tf.Variable([[1,1,1],[1,1,1]],dtype = tf.float32) # 1,3
-# b = tf.Variable([[1],[1]],dtype = tf.float32) # 1,1
-# g = tf.Variable([[0],[0]],dtype = tf.float32) #1,1
-# s = tf.Variable([[0,1,0],[0,1,0]],dtype = tf.float32) # 1,3
-# t = tf.Variable([[1],[1]],dtype = tf.float32)
-# e = tf.Variable([[1.0,1.0,1.0],[1.0,1.0,1.0]])
-# a = tf.Variable([[1.0,1.0,1.0],[0.0,0.0,0.0]])
 def generate_copy_data(batch_size,min_length,max_length,data_dim):
 	inp_arr = np.zeros((max_length * 2 + 1,batch_size))
 	out_arr = np.zeros((max_length * 2 + 1,batch_size))
@@ -254,12 +244,12 @@ def generate_copy_data(batch_size,min_length,max_length,data_dim):
 	for b in range(batch_size):
 		# generate the sequence length for the batch
 		data_length = np.random.randint(min_length,max_length)
-		inp_pattern = np.random.randint(1,data_dim,(data_length,))
+		inp_pattern = np.random.randint(1,data_dim - 1,(data_length,))
 		# insert input
 		inp_arr[:data_length,b] = inp_pattern
-		inp_arr[data_length,b] = 1
+		inp_arr[data_length,b] = data_dim - 1
 		out_arr[data_length + 1:2 * data_length + 1,b] = inp_pattern
-		out_arr[data_length,b] = 1
+		out_arr[data_length,b] = data_dim - 1
 
 		mask[data_length + 1:2 * data_length + 1,b,:] = 1
 	return inp_arr,out_arr,mask
@@ -269,8 +259,8 @@ with tf.Session() as sess:
 	batch_size = 16
 	input_dim = 8
 	output_dim = input_dim
-	seq_len = 11
-	mem_dim = 20
+	seq_len = 21
+	mem_dim = 8
 	controller_size = 20
 	org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
 	org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
@@ -283,14 +273,13 @@ with tf.Session() as sess:
 	ntm_out = run_var[0]
 	fin_memory = run_var[2]
 
-	mask_ph = tf.placeholder(tf.float32,(seq_len,batch_size,input_dim))
-	loss = tf.norm(tf.multiply(target - ntm_out,mask_ph)) * tf.reduce_mean(mask_ph)
-	# loss = tf.contrib.seq2seq.sequence_loss(
-	# 		tf.transpose(ntm_out,perm = [1,0,2]), # logits
-	# 		tf.cast(tf.transpose(org_target),tf.int32), # targets (of indices)
-	# 		tf.cast(tf.sign(tf.cast(org_target,tf.float32)),tf.float32)) # weights
+	#mask_ph = tf.placeholder(tf.float32,(seq_len,batch_size,input_dim))
+	outputs = tf.unstack(ntm_out,seq_len,0)
+	targets = tf.unstack(tf.cast(org_target,tf.int32),seq_len,0)
+	loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = t) for output,t in zip(outputs,targets)])
+	
 
-	opt = tf.train.RMSPropOptimizer(0.0001)
+	opt = tf.train.RMSPropOptimizer(0.0003,decay = 1e-6)
 	gav = opt.compute_gradients(loss,ntm.get_trainable_params())
 	gav = [(tf.clip_by_norm(g,1),v) for (g,v) in gav]
 	grads,vars = zip(*gav)
@@ -300,11 +289,16 @@ with tf.Session() as sess:
 
 	# logging stuff
 	writer = tf.summary.FileWriter('tmp/ntm',graph = sess.graph)
+	target_sum_ph = tf.expand_dims(tf.transpose(target,perm = [1,0,2]),-1)
+	output_sum_ph = tf.expand_dims(tf.transpose(ntm_out,perm = [1,0,2]),-1)
+
+	print target_sum_ph.get_shape().as_list()
+	print output_sum_ph.get_shape().as_list()
 	# summaries
 	tf.summary.scalar('loss',loss)
 	tf.summary.image('input',tf.expand_dims(inp,-1))
-	tf.summary.image('target',tf.expand_dims(target,-1))
-	tf.summary.image('output',tf.expand_dims(ntm_out,-1))
+	tf.summary.image('target',target_sum_ph)
+	tf.summary.image('output',output_sum_ph)
 	tf.summary.image('memory',tf.expand_dims(fin_memory,-1))
 	for g in grads:
 		shape = g.get_shape().as_list()
@@ -312,14 +306,38 @@ with tf.Session() as sess:
 			tf.summary.image(g.name,tf.expand_dims(tf.expand_dims(g,-1),0))
 		
 	sums = tf.summary.merge_all()
-	for epoch in range(5000):
+	for epoch in range(10000):
 		inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
 		#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
 		summaries,loss_val, _ = sess.run([sums,loss,train_op],
 			feed_dict = {
 				org_input: inp_pattern,
 				org_target: oup_pattern,
-				mask_ph: mask})
+				# mask_ph: mask
+				})
 		writer.add_summary(summaries,epoch)
 		print 'epoch: %d, loss %f' % (epoch,loss_val)
-	
+
+# proof that LSTM can learn on the training data
+	def train_LSTM(inp_ph,target,batch_size,seq_len,input_dim):
+		inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
+		inputs = tf.unstack(inp_ph,seq_len,0)
+		lstm_cell = tf.contrib.rnn.BasicLSTMCell(100)
+
+		outputs,states = tf.contrib.rnn.static_rnn(lstm_cell, inputs, dtype=tf.float32,
+	                                sequence_length=[seq_len for _ in range(batch_size)])
+		outputs = [tf.layers.dense(output,input_dim,tf.nn.relu,name = 'final_dense',reuse = i != 0) for (i,output) in enumerate(outputs)]
+		complete_outputs = tf.stack(outputs)
+		inp_s = tf.summary.image('Input',tf.expand_dims(inp,-1))
+		s =	tf.summary.image('LSTM_output',tf.expand_dims(complete_outputs,-1))
+		s = tf.summary.merge([inp_s,s])
+		targets = tf.unstack(tf.cast(target,tf.int32),seq_len,0)
+		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = target) for output,target in zip(outputs,targets)])
+		train_op = tf.train.AdamOptimizer(0.001).minimize(loss)
+		sess.run(tf.global_variables_initializer())
+		for epoch in range(50000):
+			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+			loss_val,_,summary = sess.run([loss,train_op,s],feed_dict = {org_input:inp_pattern,org_target:oup_pattern})
+			print 'epoch: %d, loss %f' % (epoch,loss_val)
+			writer.add_summary(summary)
+	# train_LSTM(inp,org_target,batch_size,seq_len,input_dim)
