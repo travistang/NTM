@@ -289,34 +289,40 @@ with tf.Session() as sess:
 
 	# logging stuff
 	writer = tf.summary.FileWriter('tmp/ntm',graph = sess.graph)
-	target_sum_ph = tf.expand_dims(tf.transpose(target,perm = [1,0,2]),-1)
-	output_sum_ph = tf.expand_dims(tf.transpose(ntm_out,perm = [1,0,2]),-1)
-
-	print target_sum_ph.get_shape().as_list()
-	print output_sum_ph.get_shape().as_list()
+	saver = tf.train.Saver()
+	inp_sum_ph = tf.expand_dims(tf.transpose(inp,perm = [1,2,0]),-1)
+	target_sum_ph = tf.expand_dims(tf.transpose(target,perm = [1,2,0]),-1)
+	output_sum_ph = tf.expand_dims(tf.transpose(ntm_out,perm = [1,2,0]),-1)
+	mem_sum_ph = tf.expand_dims(tf.transpose(fin_memory,perm = [0,2,1]),-1)
 	# summaries
 	tf.summary.scalar('loss',loss)
-	tf.summary.image('input',tf.expand_dims(inp,-1))
+	tf.summary.image('input',inp_sum_ph)
 	tf.summary.image('target',target_sum_ph)
 	tf.summary.image('output',output_sum_ph)
-	tf.summary.image('memory',tf.expand_dims(fin_memory,-1))
+	tf.summary.image('memory',mem_sum_ph)
 	for g in grads:
 		shape = g.get_shape().as_list()
 		if len(shape) == 2:
 			tf.summary.image(g.name,tf.expand_dims(tf.expand_dims(g,-1),0))
 		
 	sums = tf.summary.merge_all()
-	for epoch in range(10000):
-		inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
-		#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
-		summaries,loss_val, _ = sess.run([sums,loss,train_op],
-			feed_dict = {
-				org_input: inp_pattern,
-				org_target: oup_pattern,
-				# mask_ph: mask
-				})
-		writer.add_summary(summaries,epoch)
-		print 'epoch: %d, loss %f' % (epoch,loss_val)
+	try:
+		for epoch in range(100000):
+			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+			#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
+			summaries,loss_val, _ = sess.run([sums,loss,train_op],
+				feed_dict = {
+					org_input: inp_pattern,
+					org_target: oup_pattern,
+					# mask_ph: mask
+					})
+			writer.add_summary(summaries,epoch)
+			if epoch % 10000 == 0:
+				saver.save(sess,'ntm',global_step = epoch)
+			print 'epoch: %d, loss %f' % (epoch,loss_val)
+	except KeyboardInterrupt:
+		print 'Exit early at epoch %d' % epoch
+		saver.save(sess,'ntm',global_step = epoch)
 
 # proof that LSTM can learn on the training data
 	def train_LSTM(inp_ph,target,batch_size,seq_len,input_dim):
@@ -335,9 +341,10 @@ with tf.Session() as sess:
 		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = target) for output,target in zip(outputs,targets)])
 		train_op = tf.train.AdamOptimizer(0.001).minimize(loss)
 		sess.run(tf.global_variables_initializer())
-		for epoch in range(50000):
+		for epoch in range(100000):
 			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
 			loss_val,_,summary = sess.run([loss,train_op,s],feed_dict = {org_input:inp_pattern,org_target:oup_pattern})
 			print 'epoch: %d, loss %f' % (epoch,loss_val)
 			writer.add_summary(summary)
+
 	# train_LSTM(inp,org_target,batch_size,seq_len,input_dim)
