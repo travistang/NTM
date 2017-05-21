@@ -26,19 +26,6 @@ class NTM(object):
 		with tf.variable_scope(self.scope or 'ntm'):	
 			num_read_head_params = len(list('rgbstw'))
 			num_write_head_params= len(list('rgbstwea')) 
-
-			# if controller_type == "feed_forward":
-
-			# 	self.W_con1 = tf.Variable(np.random.rand(self.mem_length * self.num_read + self.input_dim,self.controller_dim),dtype=tf.float32)
-			# 	self.b_con1 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con1')
-			# 	self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim),dtype=tf.float32,name = 'W_con2')	
-			# 	self.b_con2 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con2')
-			# 	self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim),dtype=tf.float32,name = 'W_out')
-			# 	self.b_out = tf.Variable(np.zeros(self.out_dim,),dtype=tf.float32)
-			# 	# store all the variables above
-			# 	self.controller_vars = [self.W_con1,self.b_con1,self.W_con2,self.b_con2,self.W_out,self.b_out]
-			# else:
-			# 	raise NotImplementedError('Unsupported controller type: %s' % controller_type)	
 		
 			[self.build_head_params(self.controller_dim,read = True) for _ in range(self.num_read)]
 			[self.build_head_params(self.controller_dim,read = False) for _ in range(self.num_write)]
@@ -139,6 +126,20 @@ class NTM(object):
 
 				for _ in range(self.num_write):
 				    ww_op,ea = self.build_write_head(hid,M_t,ww_ts,_)
+				    new_write_weights.append(ww_op)
+				    ea_tuples.append(ea)
+			elif self.controller_type == 'feed_forward':
+				inp = tf.concat([x_t] + list(rts),-1) 
+				con = tf.layers.dense(inp,self.controller_dim,activation = tf.nn.relu)
+				con = tf.layers.dense(con,self.controller_dim,activation = tf.nn.relu)
+				out = tf.layers.dense(con,self.out_dim,activation = tf.nn.relu)
+				for _ in range(self.num_read):
+				    rv_op,rw_op = self.build_read_head(con,M_t,rw_ts,_)
+				    new_read_vectors.append(rv_op)
+				    new_read_weights.append(rw_op)
+
+				for _ in range(self.num_write):
+				    ww_op,ea = self.build_write_head(con,M_t,ww_ts,_)
 				    new_write_weights.append(ww_op)
 				    ea_tuples.append(ea)
 			else:
@@ -277,7 +278,7 @@ with tf.Session() as sess:
 	inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
 	target = tf.one_hot(org_target,input_dim,axis = -1,dtype = tf.float32)
 
-	ntm = NTM('LSTM',input_dim,output_dim,1,1,128,mem_dim,controller_size,3,batch_size,scope = None)
+	ntm = NTM('feed_forward',input_dim,output_dim,1,1,128,mem_dim,controller_size,3,batch_size,scope = None)
 	run_var = ntm.construct_run_var(inp)
 	ntm_out = run_var[0]
 	fin_memory = run_var[2]
