@@ -119,29 +119,6 @@ class NTM(object):
                             x -> h1 -> r/w heads
                             x,r -> con1 -> out
 		"""
-<<<<<<< HEAD
-		with tf.variable_scope(self.scope or 'ntm'):
-			inp = tf.concat([x_t] + list(rts),-1)
-			con1 = tf.nn.sigmoid(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1))
-			con2 = tf.nn.sigmoid(tf.nn.xw_plus_b(con1,self.W_con2,self.b_con2))
-			out = tf.nn.xw_plus_b(con2,self.W_out,self.b_out)
-	
-			new_read_weights = []
-			new_read_vectors = []
-			new_write_weights = []
-			ea_tuples = []
-			for _ in range(self.num_read):
-				""" Construct read heads. The build_read_head function should return the read vector op and read weight op"""
-				rv_op,rw_op = self.build_read_head(con1,M_t,rw_ts,_)
-				new_read_vectors.append(rv_op)
-				new_read_weights.append(rw_op)
-
-			for _ in range(self.num_write):
-				""" Construct write heads. The build_write_head function should return the write weight op """
-				ww_op,ea = self.build_write_head(con1,M_t,ww_ts,_)
-				new_write_weights.append(ww_op)
-				ea_tuples.append(ea)
-=======
                 new_read_weights = []
                 new_read_vectors = []
                 new_write_weights = []
@@ -164,7 +141,6 @@ class NTM(object):
                         new_write_weights.append(ww_op)
                         ea_tuples.append(ea)
 
->>>>>>> layers
 	
 		# turn list to tuples
                 new_read_weights = tuple(new_read_weights)
@@ -181,12 +157,7 @@ class NTM(object):
                 # prepare for next state
                 output = output.write(count,out)
 		return [output,count + 1,M,new_read_vectors,new_read_weights,new_write_weights,in_tensor]
-<<<<<<< HEAD
-
-	"""
-=======
 	        """
->>>>>>> layers
 		Construct the operators from inp_ph tensor to read weight
 		Input:
 			inp_ph: The input tensor the subgraph starts with
@@ -205,7 +176,7 @@ class NTM(object):
 		Wk,bk,Wb,bb,Wg,bg,Ws,bs,Wt,bt = vars
 		wt = rw_t[id]	
 		# construct subgraph
-		k = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Wk,bk))
+		k = tf.nn.xw_plus_b(inp_ph,Wk,bk)
 		b = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wb,bb))
 		g = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,Wg,bg))
 		s = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Ws,bs))
@@ -226,7 +197,7 @@ class NTM(object):
 		Wk,bk,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba = vars
 		wt = ww_t[id]
 		# construct subgraph
-		k = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Wk,bk))
+		k = tf.nn.xw_plus_b(inp_ph,Wk,bk)
 		b = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wb,bb))
 		g = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,Wg,bg))
 		s = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Ws,bs))
@@ -294,13 +265,8 @@ with tf.Session() as sess:
 	input_dim = 8
 	output_dim = input_dim
 	seq_len = 21
-<<<<<<< HEAD
-	mem_dim = 8
-	controller_size = 40
-=======
 	mem_dim = 16
 	controller_size = 20
->>>>>>> layers
 	org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
 	org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
 
@@ -319,14 +285,9 @@ with tf.Session() as sess:
 	
 
 	opt = tf.train.RMSPropOptimizer(0.0001,momentum = 0.9,decay = 1e-6)
-<<<<<<< HEAD
-	gav = opt.compute_gradients(loss,ntm.get_trainable_params())
-	gav = [(tf.clip_by_norm(g,1),v) for (g,v) in gav]
-=======
 	gav = opt.compute_gradients(loss,tf.global_variables())
 	gav = [(tf.clip_by_value(g,-10,10),v) for (g,v) in gav if g is not None]
         grad_summary = [tf.Print(g,[g],v.name + '::' + str(g.get_shape().as_list())) for (g,v) in gav]
->>>>>>> layers
 	grads,vars = zip(*gav)
 	train_op = opt.apply_gradients(gav)
 	# copy task
@@ -369,52 +330,3 @@ with tf.Session() as sess:
 		print 'Exit early at epoch %d' % epoch
 		saver.save(sess,'ntm',global_step = epoch)
 
-# proof that LSTM can learn on the training data
-<<<<<<< HEAD
-	def train_LSTM(inp_ph,target,batch_size,seq_len,input_dim):
-		inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
-		inputs = tf.unstack(inp_ph,seq_len,0)
-		lstm_cell = tf.contrib.rnn.BasicLSTMCell(100)
-
-		outputs,states = tf.contrib.rnn.static_rnn(lstm_cell, inputs, dtype=tf.float32,
-	                                sequence_length=[seq_len for _ in range(batch_size)])
-		outputs = [tf.layers.dense(output,input_dim,tf.nn.relu,name = 'final_dense',reuse = i != 0) for (i,output) in enumerate(outputs)]
-		complete_outputs = tf.stack(outputs)
-		inp_s = tf.summary.image('Input',tf.expand_dims(inp,-1))
-		s =	tf.summary.image('LSTM_output',tf.expand_dims(complete_outputs,-1))
-		s = tf.summary.merge([inp_s,s])
-		targets = tf.unstack(tf.cast(target,tf.int32),seq_len,0)
-		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = target) for output,target in zip(outputs,targets)])
-		train_op = tf.train.AdamOptimizer(0.0001).minimize(loss)
-		sess.run(tf.global_variables_initializer())
-		for epoch in range(100000):
-			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
-			loss_val,_,summary = sess.run([loss,train_op,s],feed_dict = {org_input:inp_pattern,org_target:oup_pattern})
-			print 'epoch: %d, loss %f' % (epoch,loss_val)
-			writer.add_summary(summary)
-=======
-#	def train_LSTM(inp_ph,target,batch_size,seq_len,input_dim):
-#		inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
-#		inputs = tf.unstack(inp_ph,seq_len,0)
-#		lstm_cell = tf.contrib.rnn.BasicLSTMCell(100)
-#
-#		outputs,states = tf.contrib.rnn.static_rnn(lstm_cell, inputs, dtype=tf.float32,
-#	                                sequence_length=[seq_len for _ in range(batch_size)])
-#		outputs = [tf.layers.dense(output,input_dim,tf.nn.relu,name = 'final_dense',reuse = i != 0) for (i,output) in enumerate(outputs)]
-#		complete_outputs = tf.stack(outputs)
-#		inp_s = tf.summary.image('Input',tf.expand_dims(inp,-1))
-#		s =	tf.summary.image('LSTM_output',tf.expand_dims(complete_outputs,-1))
-#		s = tf.summary.merge([inp_s,s])
-#		targets = tf.unstack(tf.cast(target,tf.int32),seq_len,0)
-#		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = target) for output,target in zip(outputs,targets)])
-#		train_op = tf.train.AdamOptimizer(0.001).minimize(loss)
-#		sess.run(tf.global_variables_initializer())
-#		for epoch in range(100000):
-#			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
-#			loss_val,_,summary = sess.run([loss,train_op,s],feed_dict = {org_input:inp_pattern,org_target:oup_pattern})
-#                        print type(gsum)
-#			print 'epoch: %d, loss %f' % (epoch,loss_val)
-#			writer.add_summary(summary)
->>>>>>> layers
-
-	# train_LSTM(inp,org_target,batch_size,seq_len,input_dim)
