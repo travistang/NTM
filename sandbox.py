@@ -317,21 +317,54 @@ with tf.Session() as sess:
 			tf.summary.image(g.name,tf.expand_dims(tf.expand_dims(g,-1),0))
 		
 	sums = tf.summary.merge_all()
-	try:
-		for epoch in range(400000):
-			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
-			#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
-			summaries,loss_val,_ = sess.run([sums,loss,train_op],
-				feed_dict = {
-					org_input: inp_pattern,
-					org_target: oup_pattern,
-					# mask_ph: mask
-					})
-			writer.add_summary(summaries,epoch)
-			if epoch % 10000 == 0:
-				saver.save(sess,'ntm',global_step = epoch)
-			print 'epoch: %d, loss %f' % (epoch,loss_val)
-	except KeyboardInterrupt:
-		print 'Exit early at epoch %d' % epoch
-		saver.save(sess,'ntm',global_step = epoch)
+	# try:
+	# 	for epoch in range(400000):
+	# 		inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+	# 		#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
+	# 		summaries,loss_val,_ = sess.run([sums,loss,train_op],
+	# 			feed_dict = {
+	# 				org_input: inp_pattern,
+	# 				org_target: oup_pattern,
+	# 				# mask_ph: mask
+	# 				})
+	# 		writer.add_summary(summaries,epoch)
+	# 		if epoch % 10000 == 0:
+	# 			saver.save(sess,'ntm',global_step = epoch)
+	# 		print 'epoch: %d, loss %f' % (epoch,loss_val)
+	# except KeyboardInterrupt:
+	# 	print 'Exit early at epoch %d' % epoch
+	# 	saver.save(sess,'ntm',global_step = epoch)
 
+def train_LSTM():
+	batch_size = 4
+	seq_len = 21
+	input_dim = 8
+
+	org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
+	org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
+
+
+	inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
+	inp = tf.unstack(org_input,seq_len,0)
+	
+	targets = tf.unstack(tf.cast(org_target,tf.int32),seq_len,0)
+	rnn = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(40) for _ in range(3)])
+	outputs,states = rnn(inp,rnn.zero_state(batch_size,tf.float32))
+	loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = t) for output,t in zip(outputs,targets)])
+	train_op = tf.train.RMSPropOptimizer(0.0001,momentum = 0.9,decay = 1e-6).minimize(loss)
+
+	for epoch in range(400000):
+		inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+		#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
+		loss_val,_ = sess.run([loss,train_op],
+			feed_dict = {
+				org_input: inp_pattern,
+				org_target: oup_pattern,
+				# mask_ph: mask
+				})
+		writer.add_summary(summaries,epoch)
+		if epoch % 10000 == 0:
+			saver.save(sess,'ntm',global_step = epoch)
+		print 'epoch: %d, loss %f' % (epoch,loss_val)
+
+train_LSTM()
