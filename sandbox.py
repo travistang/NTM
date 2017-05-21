@@ -71,6 +71,14 @@ class NTM(object):
 			ba = tf.Variable(np.ones(self.mem_length,) * 1e-1,dtype = tf.float32)
 			self.write_vars += [Wr,br,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
 
+	"""
+		Get initial memory layout as numpy array
+		The first row of the memory is set to introduce a predictable irregularity within the memory
+	"""
+	def get_initial_memory(self):
+		mem = np.zeros((self.batch_size,self.num_memory,self.mem_length),dtype = np.float32)
+		mem[:,:,0] = 1
+		return mem
 	""" 
 		get a tuple of tensors as the initial state of tf.scan function
 		the tuple will be in the format of (M,(r1,r2,...rn),(rw1,rw2,...rwn),(ww1,ww2,...wwm)
@@ -80,7 +88,7 @@ class NTM(object):
 		seq_len = inp_ph.size()
 		output = tf.TensorArray(tf.float32,seq_len,dynamic_size = False)
 		count = tf.constant(0)
-		M0 = tf.ones((self.batch_size,self.num_memory,self.mem_length),dtype = tf.float32) * 1e-6
+		M0 = tf.Variable(self.get_initial_memory(),dtype = tf.float32) 
 		rvs = tuple([tf.zeros((self.batch_size,self.mem_length),dtype=tf.float32) for _ in range(self.num_read)])
 		rws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_read)])
 		wws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_write)])
