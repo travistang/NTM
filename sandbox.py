@@ -127,13 +127,13 @@ class NTM(object):
 			ea_tuples = []
 			for _ in range(self.num_read):
 				""" Construct read heads. The build_read_head function should return the read vector op and read weight op"""
-				rv_op,rw_op = self.build_read_head(con2,M_t,rw_ts,_)
+				rv_op,rw_op = self.build_read_head(con1,M_t,rw_ts,_)
 				new_read_vectors.append(rv_op)
 				new_read_weights.append(rw_op)
 
 			for _ in range(self.num_write):
 				""" Construct write heads. The build_write_head function should return the write weight op """
-				ww_op,ea = self.build_write_head(con2,M_t,ww_ts,_)
+				ww_op,ea = self.build_write_head(con1,M_t,ww_ts,_)
 				new_write_weights.append(ww_op)
 				ea_tuples.append(ea)
 	
@@ -152,6 +152,7 @@ class NTM(object):
 		# prepare for next state
 			output = output.write(count,out)
 		return [output,count + 1,M,new_read_vectors,new_read_weights,new_write_weights,in_tensor]
+
 	"""
 		Construct the operators from inp_ph tensor to read weight
 		Input:
@@ -171,10 +172,10 @@ class NTM(object):
 		Wk,bk,Wb,bb,Wg,bg,Ws,bs,Wt,bt = vars
 		wt = rw_t[id]	
 		# construct subgraph
-		k = tf.nn.xw_plus_b(inp_ph,Wk,bk)
+		k = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Wk,bk))
 		b = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wb,bb))
 		g = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,Wg,bg))
-		s = tf.nn.xw_plus_b(inp_ph,Ws,bs)
+		s = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Ws,bs))
 		t = 1 + tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wt,bt))
 		
 		# weight ops
@@ -192,10 +193,10 @@ class NTM(object):
 		Wk,bk,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba = vars
 		wt = ww_t[id]
 		# construct subgraph
-		k = tf.nn.xw_plus_b(inp_ph,Wk,bk)
+		k = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Wk,bk))
 		b = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wb,bb))
 		g = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,Wg,bg))
-		s = tf.nn.xw_plus_b(inp_ph,Ws,bs)
+		s = tf.nn.softmax(tf.nn.xw_plus_b(inp_ph,Ws,bs))
 		t = 1 + tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wt,bt))
 		e = tf.nn.sigmoid(tf.nn.xw_plus_b(inp_ph,We,be))
 		a = tf.nn.relu(tf.nn.xw_plus_b(inp_ph,Wa,ba))
@@ -261,7 +262,7 @@ with tf.Session() as sess:
 	output_dim = input_dim
 	seq_len = 21
 	mem_dim = 8
-	controller_size = 20
+	controller_size = 40
 	org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
 	org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
 
@@ -279,7 +280,7 @@ with tf.Session() as sess:
 	loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = t) for output,t in zip(outputs,targets)])
 	
 
-	opt = tf.train.RMSPropOptimizer(0.0003,decay = 1e-6)
+	opt = tf.train.RMSPropOptimizer(0.0001,momentum = 0.9,decay = 1e-6)
 	gav = opt.compute_gradients(loss,ntm.get_trainable_params())
 	gav = [(tf.clip_by_norm(g,1),v) for (g,v) in gav]
 	grads,vars = zip(*gav)
@@ -339,7 +340,7 @@ with tf.Session() as sess:
 		s = tf.summary.merge([inp_s,s])
 		targets = tf.unstack(tf.cast(target,tf.int32),seq_len,0)
 		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = target) for output,target in zip(outputs,targets)])
-		train_op = tf.train.AdamOptimizer(0.001).minimize(loss)
+		train_op = tf.train.AdamOptimizer(0.0001).minimize(loss)
 		sess.run(tf.global_variables_initializer())
 		for epoch in range(100000):
 			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
