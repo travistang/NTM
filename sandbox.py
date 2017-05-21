@@ -317,7 +317,7 @@ with tf.Session() as sess:
 		
 	sums = tf.summary.merge_all()
 	try:
-		for epoch in range(100000):
+		for epoch in range(400000):
 			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
 			#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
 			summaries,loss_val,_ = sess.run([sums,loss,train_op],
