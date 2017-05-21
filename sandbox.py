@@ -17,7 +17,7 @@ class NTM(object):
 		self.shift_range = shift_range
 		self.controller_dim = controller_size
 		self.scope = scope
-
+		self.controller_type = controller_type
 		# construct graph for read heads
 		""" construct internal graph """
 		"""
@@ -27,18 +27,18 @@ class NTM(object):
 			num_read_head_params = len(list('rgbstw'))
 			num_write_head_params= len(list('rgbstwea')) 
 
-			if controller_type == "feed_forward":
+			# if controller_type == "feed_forward":
 
-				self.W_con1 = tf.Variable(np.random.rand(self.mem_length * self.num_read + self.input_dim,self.controller_dim),dtype=tf.float32)
-				self.b_con1 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con1')
-				self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim),dtype=tf.float32,name = 'W_con2')	
-				self.b_con2 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con2')
-				self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim),dtype=tf.float32,name = 'W_out')
-				self.b_out = tf.Variable(np.zeros(self.out_dim,),dtype=tf.float32)
-				# store all the variables above
-				self.controller_vars = [self.W_con1,self.b_con1,self.W_con2,self.b_con2,self.W_out,self.b_out]
-			else:
-				raise NotImplementedError('Unsupported controller type: %s' % controller_type)	
+			# 	self.W_con1 = tf.Variable(np.random.rand(self.mem_length * self.num_read + self.input_dim,self.controller_dim),dtype=tf.float32)
+			# 	self.b_con1 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con1')
+			# 	self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim),dtype=tf.float32,name = 'W_con2')	
+			# 	self.b_con2 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con2')
+			# 	self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim),dtype=tf.float32,name = 'W_out')
+			# 	self.b_out = tf.Variable(np.zeros(self.out_dim,),dtype=tf.float32)
+			# 	# store all the variables above
+			# 	self.controller_vars = [self.W_con1,self.b_con1,self.W_con2,self.b_con2,self.W_out,self.b_out]
+			# else:
+			# 	raise NotImplementedError('Unsupported controller type: %s' % controller_type)	
 		
 			[self.build_head_params(self.controller_dim,read = True) for _ in range(self.num_read)]
 			[self.build_head_params(self.controller_dim,read = False) for _ in range(self.num_write)]
@@ -119,45 +119,49 @@ class NTM(object):
                             x -> h1 -> r/w heads
                             x,r -> con1 -> out
 		"""
-                new_read_weights = []
-                new_read_vectors = []
-                new_write_weights = []
-                ea_tuples = []
-                with tf.variable_scope(self.scope or 'ntm'):
-                    inp = tf.concat([x_t] + list(rts),-1) 
-                    controller_rnn = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(self.controller_dim) for _ in range(3)])
-                    outputs,state = controller_rnn(inp,controller_rnn.zero_state(self.batch_size,tf.float32))
-                    hid = tf.stack(outputs)
-                    out = tf.layers.dense(hid,self.out_dim,activation = tf.nn.relu)
+		new_read_weights = []
+		new_read_vectors = []
+		new_write_weights = []
+		ea_tuples = []
+		with tf.variable_scope(self.scope or 'ntm'):
+			if self.controller_type == 'LSTM':
+				inp = tf.concat([x_t] + list(rts),-1) 
+				controller_rnn = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(self.controller_dim) for _ in range(3)])
+				outputs,state = controller_rnn(inp,controller_rnn.zero_state(self.batch_size,tf.float32))
+				hid = tf.stack(outputs)
+				out = tf.layers.dense(hid,self.out_dim,activation = tf.nn.relu)
 
-                # build r/w heads directly from x_t -> h1
-                    for _ in range(self.num_read):
-                        rv_op,rw_op = self.build_read_head(hid,M_t,rw_ts,_)
-                        new_read_vectors.append(rv_op)
-                        new_read_weights.append(rw_op)
+				# build r/w heads directly from x_t -> h1
+				for _ in range(self.num_read):
+				    rv_op,rw_op = self.build_read_head(hid,M_t,rw_ts,_)
+				    new_read_vectors.append(rv_op)
+				    new_read_weights.append(rw_op)
 
-                    for _ in range(self.num_write):
-                        ww_op,ea = self.build_write_head(hid,M_t,ww_ts,_)
-                        new_write_weights.append(ww_op)
-                        ea_tuples.append(ea)
+				for _ in range(self.num_write):
+				    ww_op,ea = self.build_write_head(hid,M_t,ww_ts,_)
+				    new_write_weights.append(ww_op)
+				    ea_tuples.append(ea)
+			else:
+				raise NotImplementedError("Unspported controller type: %s" % self.controller_type)
 
-	
+
+
 		# turn list to tuples
-                new_read_weights = tuple(new_read_weights)
-                new_read_vectors = tuple(new_read_vectors)
-                new_write_weights = tuple(new_write_weights)
+		new_read_weights = tuple(new_read_weights)
+		new_read_vectors = tuple(new_read_vectors)
+		new_write_weights = tuple(new_write_weights)
 
 		# write memory
 		# apply write weight operations to the memory one by one
 		# TODO: is this ok?!
-                M = M_t
-                for w,(e,a) in zip(new_write_weights,ea_tuples):
-                        M = write(w,M,e,a)
+		M = M_t
+		for w,(e,a) in zip(new_write_weights,ea_tuples):
+			M = write(w,M,e,a)
 
-                # prepare for next state
-                output = output.write(count,out)
+        # prepare for next state
+		output = output.write(count,out)
 		return [output,count + 1,M,new_read_vectors,new_read_weights,new_write_weights,in_tensor]
-	        """
+		"""
 		Construct the operators from inp_ph tensor to read weight
 		Input:
 			inp_ph: The input tensor the subgraph starts with
@@ -273,7 +277,7 @@ with tf.Session() as sess:
 	inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
 	target = tf.one_hot(org_target,input_dim,axis = -1,dtype = tf.float32)
 
-	ntm = NTM('feed_forward',input_dim,output_dim,1,1,128,mem_dim,controller_size,3,batch_size,scope = None)
+	ntm = NTM('LSTM',input_dim,output_dim,1,1,128,mem_dim,controller_size,3,batch_size,scope = None)
 	run_var = ntm.construct_run_var(inp)
 	ntm_out = run_var[0]
 	fin_memory = run_var[2]
