@@ -30,10 +30,10 @@ class NTM(object):
 			if controller_type == "feed_forward":
 
 				self.W_con1 = tf.Variable(np.random.rand(self.mem_length * self.num_read + self.input_dim,self.controller_dim),dtype=tf.float32)
-				self.b_con1 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32)
-				self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim),dtype=tf.float32)	
-				self.b_con2 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32)
-				self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim),dtype=tf.float32)
+				self.b_con1 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con1')
+				self.W_con2 = tf.Variable(np.random.rand(self.controller_dim,self.controller_dim),dtype=tf.float32,name = 'W_con2')	
+				self.b_con2 = tf.Variable(np.zeros(self.controller_dim,),dtype=tf.float32,name = 'b_con2')
+				self.W_out = tf.Variable(np.random.rand(self.controller_dim,self.out_dim),dtype=tf.float32,name = 'W_out')
 				self.b_out = tf.Variable(np.zeros(self.out_dim,),dtype=tf.float32)
 				# store all the variables above
 				self.controller_vars = [self.W_con1,self.b_con1,self.W_con2,self.b_con2,self.W_out,self.b_out]
@@ -71,6 +71,14 @@ class NTM(object):
 			ba = tf.Variable(np.ones(self.mem_length,) * 1e-1,dtype = tf.float32)
 			self.write_vars += [Wr,br,Wb,bb,Wg,bg,Ws,bs,Wt,bt,We,be,Wa,ba]
 
+	"""
+		Get initial memory layout as numpy array
+		The first row of the memory is set to introduce a predictable irregularity within the memory
+	"""
+	def get_initial_memory(self):
+		mem = np.zeros((self.batch_size,self.num_memory,self.mem_length),dtype = np.float32)
+		mem[:,:,0] = 1
+		return mem
 	""" 
 		get a tuple of tensors as the initial state of tf.scan function
 		the tuple will be in the format of (M,(r1,r2,...rn),(rw1,rw2,...rwn),(ww1,ww2,...wwm)
@@ -80,7 +88,7 @@ class NTM(object):
 		seq_len = inp_ph.size()
 		output = tf.TensorArray(tf.float32,seq_len,dynamic_size = False)
 		count = tf.constant(0)
-		M0 = tf.Variable(np.zeros((self.batch_size,self.num_memory,self.mem_length)),dtype = tf.float32)
+		M0 = tf.Variable(self.get_initial_memory(),dtype = tf.float32) 
 		rvs = tuple([tf.zeros((self.batch_size,self.mem_length),dtype=tf.float32) for _ in range(self.num_read)])
 		rws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_read)])
 		wws = tuple([tf.zeros((self.batch_size,self.num_memory),dtype=tf.float32) for _ in range(self.num_write)])
@@ -104,17 +112,14 @@ class NTM(object):
 			5. return new memory and all vectors, weights
 	"""
 	def main_loop(self,output,count,M_t,rts,rw_ts,ww_ts,in_tensor):
-		# logging the tensors
-		
 		x_t = in_tensor.read(count)
 		# collect read head params for next loop
 		"""
 			Architecture for feedforward controller:
-				input = concat(x_t,rv1,rv2....)
-				con1 = Dense(input,controller_size,'relu')
-				con2 = Dense(con1,controller_size,'relu')
-				out = Dense(con2,out_dim,'relu')
+                            x -> h1 -> r/w heads
+                            x,r -> con1 -> out
 		"""
+<<<<<<< HEAD
 		with tf.variable_scope(self.scope or 'ntm'):
 			inp = tf.concat([x_t] + list(rts),-1)
 			con1 = tf.nn.sigmoid(tf.nn.xw_plus_b(inp,self.W_con1,self.b_con1))
@@ -136,24 +141,52 @@ class NTM(object):
 				ww_op,ea = self.build_write_head(con1,M_t,ww_ts,_)
 				new_write_weights.append(ww_op)
 				ea_tuples.append(ea)
+=======
+                new_read_weights = []
+                new_read_vectors = []
+                new_write_weights = []
+                ea_tuples = []
+                with tf.variable_scope(self.scope or 'ntm'):
+                    inp = tf.concat([x_t] + list(rts),-1) 
+                    controller_rnn = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(self.controller_dim) for _ in range(3)])
+                    outputs,state = controller_rnn(inp,controller_rnn.zero_state(self.batch_size,tf.float32))
+                    hid = tf.stack(outputs)
+                    out = tf.layers.dense(hid,self.out_dim,activation = tf.nn.relu)
+
+                # build r/w heads directly from x_t -> h1
+                    for _ in range(self.num_read):
+                        rv_op,rw_op = self.build_read_head(hid,M_t,rw_ts,_)
+                        new_read_vectors.append(rv_op)
+                        new_read_weights.append(rw_op)
+
+                    for _ in range(self.num_write):
+                        ww_op,ea = self.build_write_head(hid,M_t,ww_ts,_)
+                        new_write_weights.append(ww_op)
+                        ea_tuples.append(ea)
+
+>>>>>>> layers
 	
 		# turn list to tuples
-			new_read_weights = tuple(new_read_weights)
-			new_read_vectors = tuple(new_read_vectors)	
-			new_write_weights = tuple(new_write_weights)
+                new_read_weights = tuple(new_read_weights)
+                new_read_vectors = tuple(new_read_vectors)
+                new_write_weights = tuple(new_write_weights)
 
 		# write memory
 		# apply write weight operations to the memory one by one
 		# TODO: is this ok?!
-			M = M_t
-			for w,(e,a) in zip(new_write_weights,ea_tuples):
-				M = write(w,M,e,a)
+                M = M_t
+                for w,(e,a) in zip(new_write_weights,ea_tuples):
+                        M = write(w,M,e,a)
 
-		# prepare for next state
-			output = output.write(count,out)
+                # prepare for next state
+                output = output.write(count,out)
 		return [output,count + 1,M,new_read_vectors,new_read_weights,new_write_weights,in_tensor]
+<<<<<<< HEAD
 
 	"""
+=======
+	        """
+>>>>>>> layers
 		Construct the operators from inp_ph tensor to read weight
 		Input:
 			inp_ph: The input tensor the subgraph starts with
@@ -257,12 +290,17 @@ def generate_copy_data(batch_size,min_length,max_length,data_dim):
 
 
 with tf.Session() as sess:
-	batch_size = 16
+	batch_size = 4
 	input_dim = 8
 	output_dim = input_dim
 	seq_len = 21
+<<<<<<< HEAD
 	mem_dim = 8
 	controller_size = 40
+=======
+	mem_dim = 16
+	controller_size = 20
+>>>>>>> layers
 	org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
 	org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
 
@@ -281,8 +319,14 @@ with tf.Session() as sess:
 	
 
 	opt = tf.train.RMSPropOptimizer(0.0001,momentum = 0.9,decay = 1e-6)
+<<<<<<< HEAD
 	gav = opt.compute_gradients(loss,ntm.get_trainable_params())
 	gav = [(tf.clip_by_norm(g,1),v) for (g,v) in gav]
+=======
+	gav = opt.compute_gradients(loss,tf.global_variables())
+	gav = [(tf.clip_by_value(g,-10,10),v) for (g,v) in gav if g is not None]
+        grad_summary = [tf.Print(g,[g],v.name + '::' + str(g.get_shape().as_list())) for (g,v) in gav]
+>>>>>>> layers
 	grads,vars = zip(*gav)
 	train_op = opt.apply_gradients(gav)
 	# copy task
@@ -311,7 +355,7 @@ with tf.Session() as sess:
 		for epoch in range(100000):
 			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
 			#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
-			summaries,loss_val, _ = sess.run([sums,loss,train_op],
+			summaries,loss_val,_ = sess.run([sums,loss,train_op],
 				feed_dict = {
 					org_input: inp_pattern,
 					org_target: oup_pattern,
@@ -326,6 +370,7 @@ with tf.Session() as sess:
 		saver.save(sess,'ntm',global_step = epoch)
 
 # proof that LSTM can learn on the training data
+<<<<<<< HEAD
 	def train_LSTM(inp_ph,target,batch_size,seq_len,input_dim):
 		inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
 		inputs = tf.unstack(inp_ph,seq_len,0)
@@ -347,5 +392,29 @@ with tf.Session() as sess:
 			loss_val,_,summary = sess.run([loss,train_op,s],feed_dict = {org_input:inp_pattern,org_target:oup_pattern})
 			print 'epoch: %d, loss %f' % (epoch,loss_val)
 			writer.add_summary(summary)
+=======
+#	def train_LSTM(inp_ph,target,batch_size,seq_len,input_dim):
+#		inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
+#		inputs = tf.unstack(inp_ph,seq_len,0)
+#		lstm_cell = tf.contrib.rnn.BasicLSTMCell(100)
+#
+#		outputs,states = tf.contrib.rnn.static_rnn(lstm_cell, inputs, dtype=tf.float32,
+#	                                sequence_length=[seq_len for _ in range(batch_size)])
+#		outputs = [tf.layers.dense(output,input_dim,tf.nn.relu,name = 'final_dense',reuse = i != 0) for (i,output) in enumerate(outputs)]
+#		complete_outputs = tf.stack(outputs)
+#		inp_s = tf.summary.image('Input',tf.expand_dims(inp,-1))
+#		s =	tf.summary.image('LSTM_output',tf.expand_dims(complete_outputs,-1))
+#		s = tf.summary.merge([inp_s,s])
+#		targets = tf.unstack(tf.cast(target,tf.int32),seq_len,0)
+#		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = target) for output,target in zip(outputs,targets)])
+#		train_op = tf.train.AdamOptimizer(0.001).minimize(loss)
+#		sess.run(tf.global_variables_initializer())
+#		for epoch in range(100000):
+#			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+#			loss_val,_,summary = sess.run([loss,train_op,s],feed_dict = {org_input:inp_pattern,org_target:oup_pattern})
+#                        print type(gsum)
+#			print 'epoch: %d, loss %f' % (epoch,loss_val)
+#			writer.add_summary(summary)
+>>>>>>> layers
 
 	# train_LSTM(inp,org_target,batch_size,seq_len,input_dim)
