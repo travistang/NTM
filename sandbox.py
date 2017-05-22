@@ -336,35 +336,50 @@ with tf.Session() as sess:
 	# 	saver.save(sess,'ntm',global_step = epoch)
 
 def train_LSTM():
-	batch_size = 4
-	seq_len = 21
-	input_dim = 8
+	with tf.Session() as sess:
+		batch_size = 4
+		seq_len = 21
+		input_dim = 8
+		output_dim = input_dim
 
-	org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
-	org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
+		org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
+		org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
 
 
-	inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
-	inp = tf.unstack(org_input,seq_len,0)
-	
-	targets = tf.unstack(tf.cast(org_target,tf.int32),seq_len,0)
-	rnn = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(40) for _ in range(3)])
-	outputs,states = rnn(inp,rnn.zero_state(batch_size,tf.float32))
-	loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = t) for output,t in zip(outputs,targets)])
-	train_op = tf.train.RMSPropOptimizer(0.0001,momentum = 0.9,decay = 1e-6).minimize(loss)
+		inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
+		#inp = tf.unstack(org_input,seq_len,0)
 
-	for epoch in range(400000):
-		inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
-		#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
-		loss_val,_ = sess.run([loss,train_op],
-			feed_dict = {
-				org_input: inp_pattern,
-				org_target: oup_pattern,
-				# mask_ph: mask
-				})
-		writer.add_summary(summaries,epoch)
-		if epoch % 10000 == 0:
-			saver.save(sess,'ntm',global_step = epoch)
-		print 'epoch: %d, loss %f' % (epoch,loss_val)
+		targets = tf.unstack(tf.cast(org_target,tf.int32),seq_len,0)
+		rnn = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(40) for _ in range(3)])
+		
+		outputs,states = tf.nn.dynamic_rnn(rnn,inp,dtype = tf.float32)
+		outputs = tf.unstack(outputs)
+		print outputs
+		outputs = [tf.layers.dense(output,output_dim,activation = tf.nn.relu,name = 'final_dense',reuse = i != 0) for (i,output) in enumerate(outputs)]
+		complete_outputs = tf.stack(outputs)
+		complete_targets = tf.one_hot(org_target,input_dim,axis = -1,dtype = tf.float32)
+
+		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = t) for output,t in zip(outputs,targets)])
+		train_op = tf.train.RMSPropOptimizer(0.0001,momentum = 0.9,decay = 1e-6).minimize(loss)
+
+		# logging stuff
+		writer = tf.summary.FileWriter('tmp/lstm')
+		s = [tf.summary.image('outputs',tf.transpose(tf.expand_dims(complete_outputs,-1),perm = [1,0,2,3]))]
+		s += [tf.summary.image('targets',tf.transpose(tf.expand_dims(complete_targets,-1),perm = [1,0,2,3]))]
+		s += [tf.summary.scalar('loss',loss)]
+		s = tf.summary.merge(s)
+		sess.run(tf.global_variables_initializer())
+		for epoch in range(400000):
+			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+			#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
+			loss_val,_,summaries = sess.run([loss,train_op,s],
+				feed_dict = {
+					org_input: inp_pattern,
+					org_target: oup_pattern,
+					})
+			writer.add_summary(summaries,epoch)
+			if epoch % 10000 == 0:
+				saver.save(sess,'ntm',global_step = epoch)
+			print 'epoch: %d, loss %f' % (epoch,loss_val)
 
 train_LSTM()
