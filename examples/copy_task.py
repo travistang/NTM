@@ -29,21 +29,25 @@ if __name__ == '__main__':
 		input_dim = 8
 		output_dim = input_dim
 		seq_len = 21
-		mem_dim = 16
+		mem_dim = output_dim
 		controller_size = 20
+		num_memory = 128
+		num_read = 1
+		num_write = 2
 		org_input = tf.placeholder(tf.uint8,(seq_len,batch_size))
 		org_target = tf.placeholder(tf.uint8,(seq_len,batch_size))
 
 		inp = tf.one_hot(org_input,input_dim,axis = -1,dtype = tf.float32)
 		target = tf.one_hot(org_target,input_dim,axis = -1,dtype = tf.float32)
 
-		ntm = NTM('feed_forward',input_dim,output_dim,1,1,128,mem_dim,controller_size,3,batch_size,scope = None)
+		ntm = NTM('feed_forward',input_dim,output_dim,num_read,num_write,num_memory,mem_dim,controller_size,3,batch_size,scope = None)
 		run_var = ntm.construct_run_var(inp)
 		ntm_out = run_var[0]
 		fin_memory = run_var[2]
 
 		#mask_ph = tf.placeholder(tf.float32,(seq_len,batch_size,input_dim))
-		outputs = tf.unstack(ntm_out,seq_len,0)
+		# write on memory
+		outputs = tf.unstack(fin_memory,num_memory,1)[seq_len + 1:2 * seq_len + 1]
 		targets = tf.unstack(tf.cast(org_target,tf.int32),seq_len,0)
 		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = t) for output,t in zip(outputs,targets)])
 		
@@ -83,5 +87,6 @@ if __name__ == '__main__':
 					org_input: inp_pattern,
 					org_target: oup_pattern,
 					})
+			writer.add_summary(summaries)
 			print 'epoch: %d, loss %f' % (epoch,loss_val)
 
