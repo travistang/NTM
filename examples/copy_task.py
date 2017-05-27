@@ -23,12 +23,27 @@ def generate_copy_data(batch_size,min_length,max_length,data_dim):
 		mask[data_length + 1:2 * data_length + 1,b,:] = 1
 	return inp_arr,out_arr,mask
 
+def generate_sort_data(batch_size,min_length,max_length,data_dim):
+	inp_arr = np.zeros((max_length * 2 + 1,batch_size))
+	out_arr = np.zeros((max_length * 2 + 1,batch_size))
+	mask = np.zeros((max_length * 2 + 1,batch_size,data_dim))
+	for b in range(batch_size):
+		data_length = np.random.randint(min_length,max_length)
+		inp_pattern = np.random.randint(1,data_dim - 1,(data_length,))
+		sorted_pattern = np.sort(inp_pattern,0)
+
+		inp_arr[:data_length,b] = inp_pattern
+		inp_arr[data_length,b] = data_dim - 1
+		out_arr[data_length + 1:2 * data_length + 1,b] = sorted_pattern
+		out_arr[data_length,b] = data_dim - 1
+		mask[data_length + 1:2 * data_length + 1,b,:] = 1
+	return inp_arr,out_arr,mask
 if __name__ == '__main__':
 	with tf.Session() as sess:
 		batch_size = 4
 		input_dim = 8
 		output_dim = input_dim
-		seq_len = 21
+		seq_len = 31
 		mem_dim = output_dim
 		controller_size = 20
 		num_memory = 128
@@ -47,7 +62,7 @@ if __name__ == '__main__':
 
 		#mask_ph = tf.placeholder(tf.float32,(seq_len,batch_size,input_dim))
 		# write on memory
-		outputs = tf.unstack(fin_memory,num_memory,1)[seq_len + 1:2 * seq_len + 1]
+		outputs = tf.unstack(ntm_out,seq_len,0)
 		targets = tf.unstack(tf.cast(org_target,tf.int32),seq_len,0)
 		loss = tf.reduce_mean([tf.nn.sparse_softmax_cross_entropy_with_logits(logits = output,labels = t) for output,t in zip(outputs,targets)])
 		
@@ -80,7 +95,7 @@ if __name__ == '__main__':
 				tf.summary.image(g.name,tf.expand_dims(tf.expand_dims(g,-1),0))
 		sums = tf.summary.merge_all()
 		for epoch in range(400000):
-			inp_pattern,oup_pattern,mask = generate_copy_data(batch_size,1,(seq_len - 1) / 2,input_dim)
+			inp_pattern,oup_pattern,mask = generate_sort_data(batch_size,1,(seq_len - 1) / 2,input_dim)
 			#print sess.run(ntm_out,feed_dict = {org_input: inp_pattern})
 			loss_val,_,summaries = sess.run([loss,train_op,sums],
 				feed_dict = {
